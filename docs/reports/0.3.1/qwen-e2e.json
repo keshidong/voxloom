@@ -1,0 +1,10 @@
+{
+  "exitCode": 0,
+  "passedTests": 3,
+  "seconds": 14.930025708999999,
+  "sampledProcessTreePeakBytes": 3049312216,
+  "samples": 114,
+  "memoryMethod": "Darwin ri_phys_footprint summed across test process descendants, sampled about 100ms; shared mappings may be counted twice.",
+  "host": "Apple M5 Pro / 48 GiB; this is a short pipeline smoke test, not 16 GiB / 8 GiB acceptance.",
+  "scope": "Real resident ASR zh/en/silence, real domain correction, real ASR-to-LLM pipeline; excludes AirPods and Watch."
+}

@@ -1,0 +1,12 @@
+{
+  "model.safetensors": "9848eaf7a5c1589c671b35035ac27b72e248dd0c604eacae547e7e403d29db45",
+  "tokenizer_config.json": "4942d005604266809309cabc9f4e9cb89ce855d59b14681fdc0e1cc62ea26c4c",
+  "chat_template.json": "75a8cfca24f00de72d796fbfed6858fc9614ef3dabd8696684cc3bc03a9c58ff",
+  "config.json": "539c6c9d482349066e2e740241e39896f3bf4de0866c245f6539c85dbb19d93c",
+  "generation_config.json": "1da527824d81e07118facff437e03f2e24a23311e3bdeb2368973fe77e5f275c",
+  "README.md": "4d7f16d0a01cd626a3d5291b77249f135eeedd9b1b259d17716cc6b3ef7365cb",
+  "merges.txt": "8831e4f1a044471340f7c0a83d7bd71306a5b867e95fd870f74d0c5308a904d5",
+  "vocab.json": "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910",
+  "model.safetensors.index.json": "2612ab715223843b3dec0742737bc85f50914ca1484ade45955f99b4e012f2bb",
+  "preprocessor_config.json": "45e120a4eda2c20c5d7f2ea9354e63536bf35e27aa573fb7cdf78017b378770d"
+}

@@ -1,0 +1,13 @@
+.build/
+.swiftpm/
+.DS_Store
+models/
+.runtime/
+*.app/
+*.profraw
+*.profdata
+__pycache__/
+*.py[cod]
+.env
+.env.*
+!.env.example

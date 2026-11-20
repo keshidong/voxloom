@@ -1,0 +1,96 @@
+import Testing
+import SpeechFoundation
+
+struct LiveStateTests {
+    @Test func firstPreviewNeedsOneSecondThenUpdatesAtHalfSecondWithoutQueuing() {
+        var state = LiveState()
+        for event in [LiveEvent.start, .ready(1), .audio(1, Array(repeating: 1000, count: 16_000))] {
+            state = LiveReducer.reduce(state, event).state
+        }
+        let first = LiveReducer.reduce(state, .pulse)
+        #expect(first.effects.count == 1)
+        state = LiveReducer.reduce(first.state, .audio(1, Array(repeating: 1000, count: 8_000))).state
+        #expect(LiveReducer.reduce(state, .pulse).effects.isEmpty)
+        let next = LiveReducer.reduce(state, .result(1, 16_000, "预览"))
+        #expect(next.effects.count == 1)
+        #expect(next.state.submitted == 24_000)
+    }
+    @Test func startRequestsPermissionAndIgnoresRepeatedStart() {
+        let first = LiveReducer.reduce(LiveState(), .start)
+        #expect(first.state.phase == .authorizing)
+        #expect(first.effects == [.authorize(1)])
+        let repeated = LiveReducer.reduce(first.state, .start)
+        #expect(repeated.state == first.state)
+        #expect(repeated.effects.isEmpty)
+    }
+
+    @Test func recordingStartsOnlyAfterCurrentPermissionAndKeepsOnlyOneInference() {
+        let starting = LiveReducer.reduce(LiveState(), .start).state
+        #expect(LiveReducer.reduce(starting, .ready(99)).effects.isEmpty)
+        let ready = LiveReducer.reduce(starting, .ready(1))
+        #expect(ready.state.phase == .recording)
+        #expect(ready.effects == [.capture(1)])
+        let voiced = [Int16](repeating: 1000, count: 24_000)
+        let audio = LiveReducer.reduce(ready.state, .audio(1, voiced)).state
+        #expect(audio.seconds == 1.5)
+        #expect(audio.level > 0)
+        let first = LiveReducer.reduce(audio, .pulse)
+        let firstMatches = first.effects == [.recognize(1, voiced)]
+        #expect(firstMatches)
+        let more = LiveReducer.reduce(first.state, .audio(1, voiced)).state
+        #expect(LiveReducer.reduce(more, .pulse).effects.isEmpty)
+        let result = LiveReducer.reduce(more, .result(1, voiced.count, "中文"))
+        #expect(result.state.text == "中文")
+        let latestMatches = result.effects == [.recognize(1, voiced + voiced)]
+        #expect(latestMatches)
+    }
+
+    @Test func stoppingFlushesLatestAudioAndCancellationRejectsLateResults() {
+        var state = LiveState()
+        for event in [LiveEvent.start, .ready(1), .audio(1, [1000, -1000]), .stop] {
+            let change = LiveReducer.reduce(state, event); state = change.state
+        }
+        #expect(state.phase == .finishing)
+        #expect(state.busy)
+        let complete = LiveReducer.reduce(state, .result(1, 2, "最终结果"))
+        #expect(complete.state.phase == .idle)
+        #expect(complete.state.text == "最终结果")
+        let cleared = LiveReducer.reduce(complete.state, .clear).state
+        #expect(cleared.text.isEmpty)
+        let restarted = LiveReducer.reduce(cleared, .start).state
+        let cancelled = LiveReducer.reduce(restarted, .cancel)
+        #expect(cancelled.state.phase == .idle)
+        #expect(cancelled.effects == [.stopCapture, .cancelRecognition])
+        #expect(LiveReducer.reduce(cancelled.state, .ready(restarted.session)).effects.isEmpty)
+        #expect(LiveReducer.reduce(cancelled.state, .result(1, 2, "迟到结果")).state.text.isEmpty)
+    }
+
+    @Test func stopWaitsForBusyInferenceAndThenFlushesShortTail() {
+        var state = LiveState()
+        for event in [LiveEvent.start, .ready(1), .audio(1, Array(repeating: 1000, count: 24_000)),
+                      .pulse, .audio(1, [1000]), .stop] { state = LiveReducer.reduce(state, event).state }
+        #expect(state.phase == .finishing)
+        let tail = LiveReducer.reduce(state, .result(1, 24_000, "部分"))
+        #expect(tail.state.submitted == 24_001)
+        #expect(tail.effects.count == 1)
+        #expect(LiveReducer.reduce(tail.state, .result(1, 24_001, "全部")).state.phase == .idle)
+    }
+
+    @Test func silenceLimitAndFailureHaveBoundedRecovery() {
+        var state = LiveReducer.reduce(LiveState(), .start).state
+        #expect(LiveReducer.reduce(state, .failed(99, "旧错误")).state.error == nil)
+        state = LiveReducer.reduce(state, .failed(1, "没有麦克风权限")).state
+        #expect(state.error == "没有麦克风权限")
+        #expect(state.phase == .idle)
+        state = LiveReducer.reduce(state, .start).state
+        state = LiveReducer.reduce(state, .ready(state.session)).state
+        #expect(LiveReducer.reduce(state, .audio(99, [1])).state.samples.isEmpty)
+        state = LiveReducer.reduce(state, .audio(state.session, [])).state
+        state = LiveReducer.reduce(state, .audio(state.session, Array(repeating: 0, count: AudioClip.maximumSamples + 2))).state
+        #expect(state.samples.count == AudioClip.maximumSamples)
+        #expect(state.phase == .idle)
+        #expect(!state.busy)
+        #expect(state.text.isEmpty)
+        #expect(LiveReducer.reduce(state, .stop).effects.isEmpty)
+    }
+}

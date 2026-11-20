@@ -1,0 +1,238 @@
+{
+  "tests": 74,
+  "suites": 19,
+  "groups": {
+    "all": {
+      "count": 1519,
+      "covered": 1485,
+      "percent": 97.761685319289,
+      "threshold": 90
+    },
+    "business": {
+      "count": 1263,
+      "covered": 1229,
+      "percent": 97.30799683293745,
+      "threshold": 90
+    },
+    "business/Capture": {
+      "count": 138,
+      "covered": 131,
+      "percent": 94.92753623188406,
+      "threshold": 90
+    },
+    "business/CommandLine": {
+      "count": 51,
+      "covered": 50,
+      "percent": 98.03921568627452,
+      "threshold": 90
+    },
+    "business/Correction": {
+      "count": 123,
+      "covered": 123,
+      "percent": 100.0,
+      "threshold": 90
+    },
+    "business/Desktop": {
+      "count": 333,
+      "covered": 314,
+      "percent": 94.29429429429429,
+      "threshold": 90
+    },
+    "business/Live": {
+      "count": 126,
+      "covered": 125,
+      "percent": 99.2063492063492,
+      "threshold": 90
+    },
+    "business/Process": {
+      "count": 266,
+      "covered": 262,
+      "percent": 98.49624060150376,
+      "threshold": 90
+    },
+    "business/Qwen": {
+      "count": 66,
+      "covered": 65,
+      "percent": 98.48484848484848,
+      "threshold": 90
+    },
+    "business/QwenASR": {
+      "count": 68,
+      "covered": 67,
+      "percent": 98.52941176470588,
+      "threshold": 90
+    },
+    "business/Recognition": {
+      "count": 4,
+      "covered": 4,
+      "percent": 100.0,
+      "threshold": 90
+    },
+    "business/Whisper": {
+      "count": 88,
+      "covered": 88,
+      "percent": 100.0,
+      "threshold": 90
+    },
+    "foundation": {
+      "count": 256,
+      "covered": 256,
+      "percent": 100.0,
+      "threshold": 100
+    },
+    "foundation/Audio": {
+      "count": 73,
+      "covered": 73,
+      "percent": 100.0,
+      "threshold": 100
+    },
+    "foundation/CLI": {
+      "count": 37,
+      "covered": 37,
+      "percent": 100.0,
+      "threshold": 100
+    },
+    "foundation/Correction": {
+      "count": 46,
+      "covered": 46,
+      "percent": 100.0,
+      "threshold": 100
+    },
+    "foundation/Live": {
+      "count": 92,
+      "covered": 92,
+      "percent": 100.0,
+      "threshold": 100
+    },
+    "foundation/Recognition": {
+      "count": 8,
+      "covered": 8,
+      "percent": 100.0,
+      "threshold": 100
+    }
+  },
+  "files": {
+    "src/business/Capture/MicrophoneCapture.swift": {
+      "count": 59,
+      "covered": 52,
+      "percent": 88.13559322033898
+    },
+    "src/business/Capture/PCMConverter.swift": {
+      "count": 53,
+      "covered": 53,
+      "percent": 100
+    },
+    "src/business/Capture/SampleCapture.swift": {
+      "count": 26,
+      "covered": 26,
+      "percent": 100
+    },
+    "src/business/CommandLine/VoiceInputCLI.swift": {
+      "count": 51,
+      "covered": 50,
+      "percent": 98.0392156862745
+    },
+    "src/business/Correction/CorrectionSession.swift": {
+      "count": 123,
+      "covered": 123,
+      "percent": 100
+    },
+    "src/business/Desktop/App/DemoApplication.swift": {
+      "count": 16,
+      "covered": 0,
+      "percent": 0
+    },
+    "src/business/Desktop/DemoApplicationDelegate.swift": {
+      "count": 21,
+      "covered": 20,
+      "percent": 95.23809523809523
+    },
+    "src/business/Desktop/DemoResources.swift": {
+      "count": 18,
+      "covered": 18,
+      "percent": 100
+    },
+    "src/business/Desktop/DemoWindowController.swift": {
+      "count": 278,
+      "covered": 276,
+      "percent": 99.28057553956835
+    },
+    "src/business/Live/LiveSpeechSession.swift": {
+      "count": 126,
+      "covered": 125,
+      "percent": 99.20634920634922
+    },
+    "src/business/Process/CommandRunner.swift": {
+      "count": 86,
+      "covered": 83,
+      "percent": 96.51162790697676
+    },
+    "src/business/Process/DeadlineCommandRunner.swift": {
+      "count": 30,
+      "covered": 29,
+      "percent": 96.66666666666667
+    },
+    "src/business/Process/JSONLineWorker.swift": {
+      "count": 150,
+      "covered": 150,
+      "percent": 100
+    },
+    "src/business/Qwen/QwenTextCorrector.swift": {
+      "count": 66,
+      "covered": 65,
+      "percent": 98.48484848484848
+    },
+    "src/business/QwenASR/QwenASRRecognizer.swift": {
+      "count": 68,
+      "covered": 67,
+      "percent": 98.52941176470588
+    },
+    "src/business/Recognition/SpeechRecognizer.swift": {
+      "count": 4,
+      "covered": 4,
+      "percent": 100
+    },
+    "src/business/Whisper/WhisperRecognizer.swift": {
+      "count": 88,
+      "covered": 88,
+      "percent": 100
+    },
+    "src/foundation/Audio/AudioClip.swift": {
+      "count": 5,
+      "covered": 5,
+      "percent": 100
+    },
+    "src/foundation/Audio/WAVCodec.swift": {
+      "count": 68,
+      "covered": 68,
+      "percent": 100
+    },
+    "src/foundation/CLI/CLIInvocation.swift": {
+      "count": 37,
+      "covered": 37,
+      "percent": 100
+    },
+    "src/foundation/Correction/Correction.swift": {
+      "count": 46,
+      "covered": 46,
+      "percent": 100
+    },
+    "src/foundation/Live/LiveState.swift": {
+      "count": 92,
+      "covered": 92,
+      "percent": 100
+    },
+    "src/foundation/Recognition/Recognition.swift": {
+      "count": 8,
+      "covered": 8,
+      "percent": 100
+    }
+  },
+  "unmappedFiles": [
+    "src/business/Correction/TextCorrector.swift",
+    "src/foundation/Audio/AudioError.swift"
+  ],
+  "gatePassed": true,
+  "scope": "Unit and module tests; real-model E2E excluded. Counts use LLVM executable lines.",
+  "branchCoverage": null
+}
