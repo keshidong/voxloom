@@ -12,8 +12,8 @@ ROOT = Path(__file__).resolve().parent.parent
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--output", default="语音转写 Demo 0.3.1.app")
-    parser.add_argument("--bundle-id", default="dev.voiceinput.whisper.demo.v31")
+    parser.add_argument("--output", default="voxloom 0.3.2.app")
+    parser.add_argument("--bundle-id", default="dev.voxloom.demo.v032")
     arguments = parser.parse_args()
     subprocess.run(["bash", "scripts/swift-command.sh", "build", "-c", "release", "--product", "voice-demo"], cwd=ROOT, check=True)
     app = ROOT / arguments.output
@@ -65,7 +65,7 @@ def main():
     info = {
         "CFBundleName": app.stem, "CFBundleDisplayName": app.stem,
         "CFBundleExecutable": "voice-demo", "CFBundleIdentifier": arguments.bundle_id,
-        "CFBundlePackageType": "APPL", "CFBundleShortVersionString": "0.3.1", "CFBundleVersion": "4",
+        "CFBundlePackageType": "APPL", "CFBundleShortVersionString": "0.3.2", "CFBundleVersion": "5",
         "LSMinimumSystemVersion": "14.0", "NSHighResolutionCapable": True,
         "NSMicrophoneUsageDescription": "点击开始录音后，使用麦克风进行本机离线语音转写。音频不会上传。",
     }

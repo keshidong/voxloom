@@ -9,6 +9,15 @@ private struct ProposedCorrector: TextCorrecting {
 }
 
 @MainActor struct CorrectionSessionTests {
+    @Test func invalidEngineResponseShowsAnActionableMessageInsteadOfAnInternalCaseName() async throws {
+        let session = CorrectionSession(corrector: InvalidResponseCorrector())
+        session.run(.init(text: "明天开会"))
+        await settle()
+        guard case .failed(let message) = session.state else { Issue.record("Expected a visible failure"); return }
+        #expect(!message.contains("invalidResult"))
+        #expect(message.contains("完整"))
+        await session.shutdown()
+    }
     @Test func replacementWaitsForCancelledEngineCleanupBeforeStartingLatestRequest() async throws {
         let corrector = CleanupCorrector()
         let session = CorrectionSession(corrector: corrector)
@@ -98,6 +107,10 @@ private actor FailingOnceCorrector: TextCorrecting {
         return .init(text: request.text, original: request.text)
     }
     func release() { continuation?.resume(); continuation = nil }
+}
+
+private struct InvalidResponseCorrector: TextCorrecting {
+    func correct(_ request: CorrectionRequest) async throws -> CorrectionCandidate { throw CorrectionError.invalidResult }
 }
 
 private actor CleanupCorrector: TextCorrecting {

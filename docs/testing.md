@@ -1,6 +1,6 @@
 # 测试标准与覆盖率
 
-日期：2026-11-20。状态：Qwen ASR + Qwen3-4B 录音中纠错已接入 Demo；Swift 与 Python 就近测试、覆盖率门槛和真实模型 E2E 已通过。完整输入法及真实设备验收仍待实施。
+日期：2026-11-21。状态：Qwen ASR + Qwen3-4B 录音中纠错已接入 Demo；Swift 与 Python 就近测试、覆盖率门槛和真实模型 E2E 已通过。完整输入法及真实设备验收仍待实施。
 
 本文件是覆盖率数值门槛与报告口径的唯一维护位置。架构与 TDD 规则见 [开发规范](../AGENTS.md)，具体能力见 [输入法方案](input-method-plan.md)。
 
@@ -74,6 +74,7 @@
 python3 scripts/check.py                 # Swift 单元 + 模块 + 行覆盖率门禁
 python3 scripts/check-python.py          # Python 协议测试 + 覆盖率
 python3 scripts/smoke-qwen.py            # 真实 Qwen 双模型 E2E
+python3 scripts/smoke-qwen.py --app 'voxloom 0.3.2.app'  # 打包资源 E2E
 python3 scripts/smoke-whisper.py         # 已安装资源的真实模型 API/CLI E2E
 ```
 
@@ -102,33 +103,33 @@ python3 scripts/smoke-whisper.py         # 已安装资源的真实模型 API/CL
 
 ## 当前实际结果
 
-2026-11-20，Demo 0.3.1：Swift 74 个测试函数、19 个套件通过，Python 2 个协议测试通过。逐模块门槛全部通过。真实模型 3 个 Qwen E2E 另跑且未计入覆盖率；App 内打包资源同样通过这 3 个测试，含中文、英文、静音、领域纠错与完整 ASR → LLM 链路。
+2026-11-21，Demo 0.3.2：Swift 84 个测试函数、19 个套件通过，Python 2 个协议测试通过。逐模块门槛全部通过。真实模型 6 个 Qwen E2E 另跑且未计入覆盖率；App 内打包资源同样通过这 6 个测试，含中文、英文、静音、领域纠错、重复指代、正常人称保留、长文本、提示长度边界与完整 ASR → LLM 链路。两套 GPU 测试顺序运行，推理超时和断言不变。
 
 | 范围 | 已覆盖 / 可执行行 | 行覆盖率 |
 |---|---:|---:|
-| all (Swift) | 1485 / 1519 | 97.76% |
-| business (Swift) | 1229 / 1263 | 97.31% |
+| all (Swift) | 1598 / 1634 | 97.80% |
+| business (Swift) | 1264 / 1300 | 97.23% |
 | business/Capture (Swift) | 131 / 138 | 94.93% |
 | business/CommandLine (Swift) | 50 / 51 | 98.04% |
 | business/Correction (Swift) | 123 / 123 | 100.00% |
 | business/Desktop (Swift) | 314 / 333 | 94.29% |
 | business/Live (Swift) | 125 / 126 | 99.21% |
 | business/Process (Swift) | 262 / 266 | 98.50% |
-| business/Qwen (Swift) | 65 / 66 | 98.48% |
+| business/Qwen (Swift) | 100 / 103 | 97.09% |
 | business/QwenASR (Swift) | 67 / 68 | 98.53% |
 | business/Recognition (Swift) | 4 / 4 | 100.00% |
 | business/Whisper (Swift) | 88 / 88 | 100.00% |
-| foundation (Swift) | 256 / 256 | 100.00% |
+| foundation (Swift) | 334 / 334 | 100.00% |
 | foundation/Audio (Swift) | 73 / 73 | 100.00% |
 | foundation/CLI (Swift) | 37 / 37 | 100.00% |
-| foundation/Correction (Swift) | 46 / 46 | 100.00% |
+| foundation/Correction (Swift) | 124 / 124 | 100.00% |
 | foundation/Live (Swift) | 92 / 92 | 100.00% |
 | foundation/Recognition (Swift) | 8 / 8 | 100.00% |
 | QwenASR/Runtime (Python) | 44 / 45 | 97.78% |
 
 Swift 采用 LLVM 可执行行；Python 采用 stdlib trace，分开报告，未混合不同工具计数。分支覆盖率均 N/A。排除 Tests/ 和第三方依赖；AudioError.swift 与 TextCorrector.swift 仅声明，无可执行映射。Python 的 1 行未覆盖为脚本直接入口，真实进程 E2E 另有验证。
 
-Swift 数据：`.build/reports/coverage.md`、`summary.json`、`coverage.json`、`tests.profdata`、`tests.log`；Python：`python-coverage.json`、`python-tests.log`；模型：`qwen-e2e.json`、`qwen-e2e.log`、`qwen-bundled-e2e.log`。短录音通过不代表准确率、真机或 16GB/8GB 内存已验收。UI 与已知限制见 [Demo 验证](demo.md)。
+Swift 数据：`.build/reports/coverage.md`、`summary.json`、`coverage.json`、`tests.profdata`、`tests.log`；Python：`python-coverage.json`、`python-tests.log`；模型：`qwen-e2e.json`、`qwen-e2e.log`、`qwen-bundled-e2e.json`、`qwen-bundled-e2e.log`。可提交摘要见 [0.3.2 报告](reports/0.3.2/README.md)。短录音通过不代表准确率、真机或 16GB/8GB 内存已验收。UI 与已知限制见 [Demo 验证](demo.md)。
 
 ## 工具依据
 

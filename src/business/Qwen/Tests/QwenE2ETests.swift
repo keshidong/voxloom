@@ -8,7 +8,84 @@ private let bundleResources = ProcessInfo.processInfo.environment["VOICE_INPUT_D
 private let model = bundleResources?.appendingPathComponent("Qwen3-4B-Instruct-2507-Q4_K_M.gguf") ?? root.appendingPathComponent("models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf")
 private let engine = bundleResources?.appendingPathComponent("llama-completion") ?? root.appendingPathComponent(".runtime/llama-build/bin/llama-completion")
 
-struct QwenE2ETests {
+@Suite(.serialized) struct QwenE2ETests {
+    @Test(.enabled(if: FileManager.default.isExecutableFile(atPath: engine.path) && FileManager.default.fileExists(atPath: model.path)))
+    func varyingPromptLengthsProduceNonemptyJSONCandidates() async throws {
+        let corrector: any TextCorrecting = QwenTextCorrector(configuration: .init(executable: engine, model: model))
+        for padding in [0, 21, 59, 117] {
+            let text = String(repeating: "请核对书目。", count: padding) + "今天下午确认图书卡信息。"
+            let result = try await corrector.correct(.init(text: text, vocabulary: "图书卡"))
+            #expect(!result.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            #expect(result.original == text)
+        }
+    }
+    @Test(.enabled(if: FileManager.default.isExecutableFile(atPath: engine.path) && FileManager.default.fileExists(atPath: model.path)))
+    func repeatedReferencesKeepTheObjectOfTheActionConsistent() async throws {
+        let original = "我请师傅把纸箱搬进仓库，师傅说纸箱必须搬到仓库里面，后来又说必须把我搬到仓库里面。"
+        let corrector: any TextCorrecting = QwenTextCorrector(configuration: .init(executable: engine, model: model))
+        let result = try await corrector.correct(.init(text: original))
+        #expect(result.original == original)
+        #expect(!result.text.contains("把我搬"))
+        #expect(result.text.contains("纸箱"))
+        #expect(result.text.contains("仓库"))
+        let normal = "他送我回家，我让他在家门口停车。"
+        let preserved = try await corrector.correct(.init(text: normal))
+        #expect(preserved.text.contains("送我回家"))
+        let delivery = "这箱书不能放在店门口，店员说必须送我上门，这些书必须直接送我上门。"
+        let delivered = try await corrector.correct(.init(text: delivery))
+        #expect(!delivered.text.contains("送我上门"))
+        #expect(!delivered.text.contains("送他上门"))
+        #expect(delivered.text.contains("上门") || delivered.text.contains("到家"))
+        #expect(delivered.text.contains("书") || delivered.text.contains("货"))
+        // Optional local-only diagnostics. Text comes from an explicitly named
+        // private file, never from committed fixtures or test output.
+        if let path = ProcessInfo.processInfo.environment["VOXLOOM_DIAGNOSTIC_CASE"] {
+            let cases = try JSONDecoder().decode([DiagnosticCase].self, from: Data(contentsOf: URL(fileURLWithPath: path)))
+            for input in cases {
+                let candidate = try await corrector.correct(.init(text: input.text))
+                let forbiddenCount = input.forbidden.filter { candidate.text.contains($0) }.count
+                let requiredCount: Int
+                if let pattern = input.pattern {
+                    requiredCount = try NSRegularExpression(pattern: pattern).numberOfMatches(in: candidate.text,
+                        range: NSRange(candidate.text.startIndex..., in: candidate.text))
+                } else { requiredCount = candidate.text.components(separatedBy: input.required).count - 1 }
+                #expect(forbiddenCount == 0)
+                #expect(requiredCount >= input.minimumOccurrences)
+            }
+        }
+    }
+    @Test(.enabled(if: FileManager.default.isExecutableFile(atPath: engine.path) && FileManager.default.fileExists(atPath: model.path)))
+    func longDictationReturnsACompleteCandidateIncludingTheLastSentence() async throws {
+        let sentences = [
+            "今天我们讨论图书馆新系统的上线安排，首先需要整理现有书目并检查每一本书的编号。",
+            "管理员会在周一完成数据核对，周二安排志愿者测试借书和还书，发现问题要及时登记。",
+            "测试期间保留旧系统作为备用，新旧数据需要每天核对，避免重复借阅或者遗漏归还记录。",
+            "读者可以使用图书卡查询借阅历史，也可以搜索作者和书名，暂时不要开放批量删除功能。",
+            "如果遇到无法识别的条码，请记录设备型号和出现时间，然后联系值班人员协助处理。",
+            "下一阶段还要完善无障碍操作，让不同年龄的读者都能够方便地查询书籍和预约座位。",
+            "所有通知发布之前都需要经过核对，不要把测试环境的截图当作正式操作说明发给读者。",
+            "图书采购需要保留每一笔订单的记录，工作人员应当在收货之后检查书籍数量和外观是否符合要求。",
+            "对于已经损坏或者缺页的书籍，需要在系统中标记原因，等待管理员核实以后再决定后续处理方式。",
+            "周末开放时间可能会根据读者的预约情况调整，具体安排应当提前发布并在入口处放置清晰的提示。",
+            "场地维护期间不安排大型讲座，阅读区保持安静，工作人员可以在服务台回答查询和预约方面的问题。",
+            "新的培训材料应当包含常见错误和恢复步骤，方便第一次使用系统的志愿者独立完成日常操作。",
+            "每一轮测试结束后都要确认临时账号已经停用，并把发现的问题按照影响范围整理成清楚的清单。",
+            "图书馆还计划增设安静的自习区域，桌椅和照明需要在开放之前完成检查，以免影响读者正常学习。",
+            "宣传海报上的时间和地点必须与预约页面保持一致，如果安排发生变化，需要及时通知已经报名的读者。",
+            "培训活动结束后可以收集参与者的意见，优先处理影响正常借阅的问题，再逐步完善其他操作细节。",
+            "工作人员应当了解如何导出查询结果和检查预约状态，但不要随意修改其他岗位负责的数据记录。",
+            "在正式上线前需要完成最后一轮核对，确认书目检索和借阅记录能够正常显示，并保留必要的回退步骤。",
+            "每一个待处理事项都要有明确的负责人和完成时间，交接时说明目前进度以及还需要进一步确认的问题。",
+            "如果用户不小心关闭了页面，应当能够重新打开并看到最近的操作结果，而不需要重复提交同一个请求。",
+            "最后请记住把蓝色图书卡放回服务台。"
+        ]
+        let original = sentences.joined()
+        let corrector: any TextCorrecting = QwenTextCorrector(configuration: .init(executable: engine, model: model))
+        let result = try await corrector.correct(.init(text: original))
+        #expect(result.original == original)
+        #expect(result.text.contains("蓝色图书卡"))
+        #expect(result.text.count > original.count * 3 / 4)
+    }
     @Test(.enabled(if: FileManager.default.isExecutableFile(atPath: engine.path) && FileManager.default.fileExists(atPath: model.path),
                    "Local Qwen resources and access to Metal required"))
     func actualOfflineModelRepairsDomainWordsAndRetainsAReviewableOriginal() async throws {
@@ -20,4 +97,12 @@ struct QwenE2ETests {
         #expect(result.text.contains("计价"))
         #expect(result.containsNumbers)
     }
+}
+
+private struct DiagnosticCase: Decodable {
+    let text: String
+    let forbidden: [String]
+    let required: String
+    let minimumOccurrences: Int
+    let pattern: String?
 }

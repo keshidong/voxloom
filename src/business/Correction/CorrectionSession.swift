@@ -1,3 +1,4 @@
+import Foundation
 import SpeechFoundation
 import RxSwift
 
@@ -36,7 +37,7 @@ public enum CorrectionStatus: Sendable, Equatable {
                         try Task.checkCancellation()
                         observer.onNext(.candidate(candidate))
                     } catch is CancellationError {} catch {
-                        observer.onNext(.failed("本地纠错失败：\(error)"))
+                        observer.onNext(.failed("本地纠错失败：\(error.localizedDescription)"))
                     }
                     observer.onCompleted()
                 }

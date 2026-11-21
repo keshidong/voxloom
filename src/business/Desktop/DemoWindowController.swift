@@ -65,7 +65,7 @@ import RxSwift
 
     private func buildWindow() {
         guard let window, let content = window.contentView else { return }
-        window.title = "Qwen 语音输入 Demo 0.3.1"
+        window.title = "voxloom 0.3.2"
         window.minSize = NSSize(width: 980, height: 760)
         window.center()
         window.delegate = self

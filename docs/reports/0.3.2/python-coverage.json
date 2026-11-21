@@ -1,0 +1,11 @@
+{
+  "tests": 2,
+  "file": "src/business/QwenASR/Runtime/qwen_asr_worker.py",
+  "coveredLines": 44,
+  "executableLines": 45,
+  "linePercent": 97.77777777777777,
+  "threshold": 90,
+  "gatePassed": true,
+  "branchCoverage": null,
+  "scope": "Python stdlib trace; real MLX is replaced at model boundary. Real-model E2E excluded."
+}

@@ -1,0 +1,12 @@
+{
+  "exitCode": 0,
+  "passedTests": 6,
+  "seconds": 49.639932584,
+  "sampledProcessTreePeakBytes": 2578324392,
+  "samples": 376,
+  "memoryMethod": "Darwin ri_phys_footprint summed across test process descendants, sampled about 100ms; shared mappings may be counted twice.",
+  "host": "Apple M5 Pro / 48 GiB; this is a short pipeline smoke test, not 16 GiB / 8 GiB acceptance.",
+  "execution": "GPU suites run sequentially; ordinary per-request deadlines remain enabled.",
+  "scope": "Real ASR zh/en/silence, ASR-to-LLM pipeline, repeated object references, valid person references, long dictation, prompt length variations and domain words; excludes AirPods and Watch.",
+  "reportNote": "Counts aggregated from the captured two successful suite runs; parser accepts singular suite and plural suites."
+}

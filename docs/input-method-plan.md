@@ -1,6 +1,6 @@
 # 语音与手势输入法方案
 
-日期：2026-11-20。状态：macOS [Demo 0.3.1](demo.md) 默认使用 Qwen3-ASR-1.7B 4-bit，并接入 Qwen3-4B 录音中纠错；保留 Whisper 替换引擎、API 与 CLI。真实中英文、双模型链路与打包资源 E2E 已通过；Watch、系统输入法与整体性能验收待实施。历史基础实现见 [切片 1](acceptance-01.md)。
+日期：2026-11-21。状态：macOS [Demo 0.3.2](demo.md) 默认使用 Qwen3-ASR-1.7B 4-bit，并接入 Qwen3-4B 录音中纠错；保留 Whisper 替换引擎、API 与 CLI。真实中英文、双模型链路与打包资源 E2E 已通过；Watch、系统输入法与整体性能验收待实施。历史基础实现见 [切片 1](acceptance-01.md)。
 
 工程约束见 [开发规范](../AGENTS.md)，测试与覆盖率要求见 [测试标准](testing.md)。
 
@@ -27,7 +27,7 @@ AirPods 负责收音，Apple Watch 负责控制，目标设备负责语音识别
 | 候选 | 本项目评估定位 | 能力依据与待验证项 |
 |---|---|---|
 | Whisper 多语言模型 + whisper.cpp | 若先做 Mac，首轮评估以 large-v3-turbo 为基线；资源受限设备再对比 small 等多语言模型 | [Whisper](https://github.com/openai/whisper)提供多语言转写模型；[whisper.cpp](https://github.com/ggml-org/whisper.cpp)支持本地推理及 Apple Silicon 优化。不要使用仅英语的 `.en` 模型；需实测中文、英文和混说，以及分段、结果修订、内存和延迟 |
-| Qwen3-ASR 1.7B 4-bit | Demo 0.3.1 默认 STT，MLX Audio 适配已运行 | [官方仓库](https://github.com/QwenLM/Qwen3-ASR)与 [MLX Audio](https://github.com/Blaizzy/mlx-audio)；当前使用常驻模型的周期性重识别，尚未接原生流式解码，轻声与混说需单独评估 |
+| Qwen3-ASR 1.7B 4-bit | Demo 0.3.2 默认 STT，MLX Audio 适配已运行 | [官方仓库](https://github.com/QwenLM/Qwen3-ASR)与 [MLX Audio](https://github.com/Blaizzy/mlx-audio)；当前使用常驻模型的周期性重识别，尚未接原生流式解码，轻声与混说需单独评估 |
 | Apple SpeechTranscriber | 支持设备上的系统本地识别对照 | [系统接口](https://developer.apple.com/documentation/speech/speechtranscriber)要求检查设备及语言资源支持；[Apple 说明](https://developer.apple.com/videos/play/wwdc2025/277/)确认端上识别。需验证中英文资源、混说、断网冷启动和系统版本兼容，不将选择某个 locale 等同于自动双语 |
 
 使用同一批真实 AirPods 录音对比候选：中文 CER、英文 WER、混说及术语正确率、首个可用结果延迟、停止到最终文本的延迟、冷/热启动、峰值内存、能耗和静音误识别。模型、量化、推理引擎、设备和系统版本随报告记录；达标阈值在首轮实测后确定。
@@ -38,7 +38,7 @@ AirPods 负责收音，Apple Watch 负责控制，目标设备负责语音识别
 
 明确要求：承载本地推理的设备在 **16GB 总内存配置**上可运行，整个输入法的**峰值内存不超过 8GB**。统计包含应用、辅助推理进程、两模型、推理缓存和音频缓冲，不仅计算模型文件；不将模型放入不同进程作为绕过上限的方法。
 
-当前组合为 Qwen3-ASR-1.7B 4-bit + Qwen3-4B-Instruct-2507 Q4_K_M，LLM 上下文限制 2048 token、输出最多 384 token。模型磁盘大小分别约 1.60GB / 2.50GB，不以此推算运行内存。M5 Pro / 48GiB 的短录音双模型 E2E 采样到进程树 `ri_phys_footprint` 峰值约 2.84GiB；这是初测，尚未验证 16GB 配置、长输入、连续轮次、文件映射占用、内存压力或 swap。详见 [Demo 记录](demo.md)。
+当前组合为 Qwen3-ASR-1.7B 4-bit + Qwen3-4B-Instruct-2507 Q4_K_M，LLM 上下文按输入限制为 4096 或 8192 token、输出 768–3256 token；模型生成局部修改，首轮有实际修改时最多再复核一次，两轮共用默认 45 秒预算。模型磁盘大小分别约 1.60GB / 2.50GB，不以此推算运行内存。M5 Pro / 48GiB 的短录音双模型 E2E 采样到进程树 `ri_phys_footprint` 峰值约 2.40GiB（0.3.2 源码及打包资源回归）；这是初测，尚未验证 16GB 配置、长输入、连续轮次、文件映射占用、内存压力或 swap。详见 [Demo 记录](demo.md)。
 
 下面保留原 Whisper + Qwen 短上下文组合的历史估算，不能套用为当前 Qwen ASR 组合的实测结论。
 
@@ -123,7 +123,7 @@ AirPods 负责收音，Apple Watch 负责控制，目标设备负责语音识别
 | 顺序 | 切片 | 验收目标 | 当前状态 |
 |---|---|---|---|
 | 1 | 纯 Whisper 转写模块 | 规范音频到原始文本；通用识别接口、可换权重、取消/超时、测试与真实模型 E2E | 已实现 CPU API/CLI；详见切片 1 |
-| 2 | Qwen ASR 与可替换的 Qwen3-4B 文本纠错 | 独立接口，保留原始转写；录音中纠错、受控上下文、取消、失败保留原文与双模型初测 | Demo 0.3.1 已实现；单元/模块与真实模型 E2E 通过，准确率和资源验收待补 |
+| 2 | Qwen ASR 与可替换的 Qwen3-4B 文本纠错 | 独立接口，保留原始转写；录音中纠错、受控上下文、取消、失败保留原文与双模型初测 | Demo 0.3.2 已实现；单元/模块与真实模型 E2E 通过，准确率和资源验收待补 |
 | 3 | AirPods 采集与平台装配 | 明确首发应用/设备矩阵；真实收音、权限、路由、中断；混说和轻声评估 | Mac 默认麦克风 Demo 已实现；AirPods 真机与录音集评估待执行 |
 | 4 | 纯函数手势、候选与会话规则 | 合成/可重放样本验证方向、中立区、回程、列表边界和会话转换 | 未开始 |
 | 5 | 多事件协调与 Watch 实际动作 | 按需 Rx*、虚拟时间时序；真机上下翻及可见控件互点、误触与延迟 | 未开始 |

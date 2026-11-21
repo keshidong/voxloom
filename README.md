@@ -2,9 +2,11 @@
 
 voxloom 是一个本地运行的中英文语音输入项目：语音识别、上下文纠错与设备交互通过独立接口组合。当前提供 macOS Demo，后续接入手势控制与系统输入法。
 
-本机构建产物为 `语音转写 Demo 0.3.1.app`，双击即可录音；AirPods 可设为系统默认输入设备。GitHub 仓库提交源码、测试、文档与复现脚本，模型权重、运行环境和 App 构建产物通过下方命令在本机准备。
+本机构建产物为 `voxloom 0.3.2.app`，双击即可录音；AirPods 可设为系统默认输入设备。GitHub 仓库提交源码、测试、文档与复现脚本，模型权重、运行环境和 App 构建产物通过下方命令在本机准备。
 
 默认链路：**Qwen3-ASR-1.7B 4-bit → Qwen3-4B-Instruct-2507 Q4_K_M 纠错**。中文与英文均在本机处理，录音中逐段显示原始转写；文字稳定约 0.8 秒或持续更新约 3 秒时请求纠错，停止后补齐末段。原始转写与可编辑候选分别显示、分别复制；数字变化提示核对。可关闭纠错，也可切换 Whisper base / tiny / Turbo。
+
+0.3.2 修复纠错引擎提前结束导致的 `invalidResult`，以经过原文匹配校验的局部修改生成候选，有修改时最多再复核一次，补查同一段里的重复指代错误。接口保持不变；详见[纠错修复说明](docs/correction-0.3.2.md)。
 
 这是最长 60 秒录音的周期性重新识别，尚未接入 Qwen 原生流式解码、Watch 或系统输入法上屏。首次加载模型需要等待；模型准确率、AirPods 轻声及中英混说仍需录音集评估。双模型已运行，但 16GB 设备上整个进程树峰值 ≤8GB 的完整验收尚未完成。
 
@@ -41,13 +43,14 @@ await recognizer.shutdown()
 
 ```bash
 bash scripts/prepare-demo.sh             # 开发者安装固定资源并构建；此步骤联网
-python3 scripts/make-demo.py             # 资源齐全时重打包 0.3.1
+python3 scripts/make-demo.py             # 资源齐全时重打包 0.3.2
 python3 scripts/check.py                 # Swift 单元、模块、界面集成与覆盖率门槛
 python3 scripts/check-python.py          # Python 桥接协议测试与覆盖率
 python3 scripts/smoke-qwen.py            # 真实双模型 E2E 与短录音资源采样
+python3 scripts/smoke-qwen.py --app 'voxloom 0.3.2.app'  # 用打包资源重跑
 python3 scripts/smoke-whisper.py         # 保留的 Whisper API / CLI E2E
 ```
 
 Qwen 安装脚本为 `scripts/prepare-qwen.py`，固定模型 revision、SHA256 和依赖版本；资源安装在 `.runtime/` 与 `models/`，不使用 sudo。运行设置离线模式，不上传音频/正文、不自动下载或回退云端。应用使用本机 ad-hoc 签名，未做其他设备分发公证。原 `voice-input` CLI 保持 Whisper 文件转写能力。
 
-当前验证摘要保存在 [docs/reports/0.3.1](docs/reports/0.3.1/coverage.md)，完整本地报告在 `.build/reports/`，真实模型 E2E 不计入单元/模块覆盖率。历史首个 Whisper 切片记录保留在 [acceptance-01.md](docs/acceptance-01.md)。资源与模型来源见 [第三方说明](docs/third-party.md)。
+当前验证摘要保存在 [docs/reports/0.3.2](docs/reports/0.3.2/README.md)，完整本地报告在 `.build/reports/`，真实模型 E2E 不计入单元/模块覆盖率。历史首个 Whisper 切片记录保留在 [acceptance-01.md](docs/acceptance-01.md)。资源与模型来源见 [第三方说明](docs/third-party.md)。
