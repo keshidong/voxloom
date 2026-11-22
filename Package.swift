@@ -35,7 +35,7 @@ let package = Package(
         .target(name: "VoiceDemoUI", dependencies: ["SpeechInput", "SpeechFoundation"], path: "src/business/Desktop", exclude: ["Tests", "App"]),
         .executableTarget(name: "VoiceDemo", dependencies: ["VoiceDemoUI"], path: "src/business/Desktop/App"),
         .target(name: "VoxloomDesktop", dependencies: ["SpeechInput", "SpeechFoundation", .product(name: "RxSwift", package: "RxSwift-6.10.2")], path: "src/business/VoxloomDesktop", exclude: ["Tests", "App"]),
-        .executableTarget(name: "Voxloom", dependencies: ["VoxloomDesktop"], path: "src/business/VoxloomDesktop/App"),
+        .executableTarget(name: "Voxloom", dependencies: ["VoxloomDesktop"], path: "src/business/VoxloomDesktop/App", exclude: ["Resources"]),
         .testTarget(name: "VoxloomDesktopTests", dependencies: ["VoxloomDesktop", "SpeechInput", "SpeechFoundation"], path: "src/business/VoxloomDesktop/Tests"),
         .testTarget(name: "DesktopTests", dependencies: ["VoiceDemoUI", "SpeechInput", "SpeechFoundation"], path: "src/business/Desktop/Tests"),
         .testTarget(name: "WhisperTests", dependencies: ["SpeechInput", "SpeechFoundation"], path: "src/business/Whisper/Tests"),

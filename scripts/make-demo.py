@@ -8,6 +8,7 @@ import shutil
 import subprocess
 
 ROOT = Path(__file__).resolve().parent.parent
+APP_ICON = ROOT / "src/business/VoxloomDesktop/App/Resources/AppIcon.icns"
 
 
 def main():
@@ -76,6 +77,8 @@ def main():
         "NSMicrophoneUsageDescription": "点击开始录音后，使用麦克风进行本机离线语音转写。音频不会上传。",
     }
     if standalone:
+        shutil.copy2(APP_ICON, resources / APP_ICON.name)
+        info["CFBundleIconFile"] = APP_ICON.name
         info["LSUIElement"] = True
         info["NSMicrophoneUsageDescription"] = "按住 Fn 说话时，使用麦克风进行本机离线转写。音频不会上传。"
     (contents / "Info.plist").write_bytes(plistlib.dumps(info))
