@@ -124,6 +124,11 @@ import Testing
 
 @MainActor struct VoxloomSampleApplicationTests {
     @Test func sampleUsesTheEditableOverlayAndCanBeCopiedOrCleared() async throws {
+        func checkpoint(_ phase: String) {
+            guard ProcessInfo.processInfo.environment["GITHUB_ACTIONS"] == "true" else { return }
+            FileHandle.standardError.write(Data("sample checkpoint \(phase)\n".utf8))
+        }
+        checkpoint("start")
         _ = NSApplication.shared
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
@@ -135,23 +140,38 @@ import Testing
         var initial = DictationSettings()
         initial.correctsText = false
         initial.save(to: defaults)
+        checkpoint("clipboard")
         let board = NSPasteboard.withUniqueName()
         defer { board.releaseGlobally() }
 
+        checkpoint("coordinator")
         let app = VoxloomCoordinator(root: root, defaults: defaults, pasteboard: board,
                                      recognizer: { _ in SampleRecognizer() }, activate: {}, permissions: .init(isTrusted: { false }))
         app.connectViews()
+        let render = app.flow.onChange
+        app.flow.onChange = { [weak app] in
+            checkpoint("before render \(String(describing: app?.flow.state?.live.phase))")
+            render?()
+            checkpoint("after render")
+        }
+        defer { app.flow.onChange = render }
+        checkpoint("view connected")
         app.applicationDidBecomeActive(Notification(name: NSApplication.didBecomeActiveNotification))
         app.applicationDidResignActive(Notification(name: NSApplication.didResignActiveNotification))
+        checkpoint("reopen")
         #expect(app.applicationShouldHandleReopen(NSApp, hasVisibleWindows: false))
         let rootView = try #require(app.overlay.panel.contentView)
+        checkpoint("expand")
         try #require(findButton(labeled: "草稿", in: rootView)).performClick(nil)
+        checkpoint("sample control")
         app.overlay.sample.performClick(nil)
+        checkpoint("sample control returned")
         let end = ContinuousClock.now.advanced(by: .seconds(2))
         while !app.overlay.copy.isEnabled && ContinuousClock.now < end {
             // Let the main queue deliver the sample and its transcription between checks.
             try await Task.sleep(for: .milliseconds(10))
         }
+        checkpoint("result wait ended")
         try #require(app.overlay.copy.isEnabled)
         #expect(app.flow.usesSample)
         #expect(app.overlay.editor.string == "示例草稿")
@@ -159,8 +179,10 @@ import Testing
         try #require(findButton(labeled: "收起草稿", in: rootView)).performClick(nil)
         #expect(app.overlay.status.stringValue == "草稿已就绪")
         #expect(app.overlay.editor.isHiddenOrHasHiddenAncestor)
+        checkpoint("expand")
         try #require(findButton(labeled: "草稿", in: rootView)).performClick(nil)
         #expect(app.overlay.editor.string == "示例草稿")
+        checkpoint("first responder")
         #expect(app.overlay.panel.firstResponder === app.overlay.editor)
         let enter = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
             timestamp: 0, windowNumber: app.overlay.panel.windowNumber, context: nil,
@@ -173,18 +195,22 @@ import Testing
         #expect(app.flow.state?.text == "编辑后的草稿")
         #expect(app.flow.canStart)
         #expect(!app.overlay.sample.isEnabled)
+        checkpoint("copy")
         app.overlay.copy.performClick(nil)
         #expect(board.string(forType: .string) == "编辑后的草稿")
         app.overlay.clear.performClick(nil)
         #expect(app.overlay.editor.string.isEmpty)
         try FileManager.default.removeItem(at: root.appendingPathComponent("chinese.wav"))
+        checkpoint("sample control")
         app.overlay.sample.performClick(nil)
         #expect(app.overlay.status.stringValue == "示例音频不可用")
         let hide = try #require(findButton(labeled: "隐藏悬浮窗口", in: rootView))
         hide.performClick(nil)
         #expect(!app.overlay.panel.isVisible)
+        checkpoint("reopen")
         #expect(app.applicationShouldHandleReopen(NSApp, hasVisibleWindows: false))
         #expect(app.overlay.panel.isVisible)
+        checkpoint("stop")
         await app.stop()
         app.overlay.panel.orderOut(nil)
     }
