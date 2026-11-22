@@ -130,10 +130,11 @@ private struct ReviewCorrectorFixture: TextCorrecting {
         await controller.shutdown()
     }
     func waitUntil(_ condition: () -> Bool) async throws {
-        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+        let clock = SuspendingClock()
+        let deadline = clock.now.advanced(by: .seconds(3))
         while !condition() {
-            try #require(ContinuousClock.now < deadline)
-            try await Task.sleep(for: .milliseconds(10))
+            try #require(clock.now < deadline)
+            try await clock.sleep(for: .milliseconds(10))
         }
     }
 

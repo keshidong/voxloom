@@ -13,31 +13,6 @@ report_failure() {
         local details
         details="$(grep -Em 10 '✘|[Ee]rror:|[Ff]ailed' "$log" || true)"
         details="${details:-$(tail -n 4 "$log")}"
-        if [ "$group" = desktop-sample ]; then
-            local crash
-            crash="$(python3 - <<'PY'
-import json
-from pathlib import Path
-import time
-
-root = Path.home() / "Library/Logs/DiagnosticReports"
-for path in sorted(root.glob("swiftpm-testing-helper*.ips"), key=lambda item: item.stat().st_mtime, reverse=True)[:1]:
-    if time.time() - path.stat().st_mtime >= 180:
-        continue
-    with path.open() as source:
-        source.readline()
-        report = json.load(source)
-    fault = report.get("faultingThread")
-    print(report.get("exception", {}).get("signal", "unknown signal"))
-    if fault is not None:
-        for frame in report["threads"][fault]["frames"][:14]:
-            binary = report["usedImages"][frame["imageIndex"]]["name"]
-            print(binary, frame.get("symbol", frame.get("imageOffset", "")))
-PY
-)"
-            details="$details
-$crash"
-        fi
         details="${details//%/%25}"
         details="${details//$'\r'/%0D}"
         details="${details//$'\n'/%0A}"
