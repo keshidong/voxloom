@@ -12,8 +12,8 @@ private struct ProposedCorrector: TextCorrecting {
     @Test func invalidEngineResponseShowsAnActionableMessageInsteadOfAnInternalCaseName() async throws {
         let session = CorrectionSession(corrector: InvalidResponseCorrector())
         session.run(.init(text: "明天开会"))
-        await settle()
-        guard case .failed(let message) = session.state else { Issue.record("Expected a visible failure"); return }
+        let status = try await waitForState(in: session) { $0 != .idle && $0 != .working }
+        guard case .failed(let message) = status else { Issue.record("Expected a visible failure"); return }
         #expect(!message.contains("invalidResult"))
         #expect(message.contains("完整"))
         await session.shutdown()
@@ -27,11 +27,7 @@ private struct ProposedCorrector: TextCorrecting {
         while !(await corrector.cleaning) { await Task.yield() }
         await settle()
         await corrector.finishCleanup()
-        var completed = session.states
-            .filter { $0 != .idle && $0 != .working }
-            .timeout(.seconds(2), scheduler: MainScheduler.instance)
-            .take(1).values.makeAsyncIterator()
-        let result = try await completed.next()
+        let result = try await waitForState(in: session) { $0 != .idle && $0 != .working }
         #expect(result == .candidate(.init(text: "最新文字", original: "最新文字")))
         await session.shutdown()
     }
@@ -39,19 +35,17 @@ private struct ProposedCorrector: TextCorrecting {
         let corrector = FailingOnceCorrector()
         let session = CorrectionSession(corrector: corrector)
         session.run(.init(text: "同一句"))
-        await settle()
-        if case .failed = session.state {} else { Issue.record("Expected visible correction failure") }
+        let firstResult = try await waitForState(in: session) { $0 != .idle && $0 != .working }
+        if case .failed = firstResult {} else { Issue.record("Expected visible correction failure") }
         session.run(.init(text: "同一句"))
-        await settle()
-        #expect(session.state == .candidate(.init(text: "同一句", original: "同一句")))
+        try await expectState(.candidate(.init(text: "同一句", original: "同一句")), in: session)
         session.run(.init(text: "延迟结果"))
         while !(await corrector.waiting) { await Task.yield() }
         session.cancel()
         session.run(.init(text: "新录音"))
         await settle()
         await corrector.release()
-        await settle()
-        #expect(session.state == .candidate(.init(text: "新录音", original: "新录音")))
+        try await expectState(.candidate(.init(text: "新录音", original: "新录音")), in: session)
         await session.shutdown()
     }
     @Test func recordingCorrectionsUseStableTextAndPeriodicLatestTextWithoutWaitingForStop() async throws {
@@ -62,27 +56,26 @@ private struct ProposedCorrector: TextCorrecting {
         await settle()
         #expect(session.state == .idle)
         scheduler.advanceTo(scheduler.clock.addingTimeInterval(0.02))
-        await settle()
-        #expect(session.state == .candidate(.init(text: "充值额度为10", original: "第一段")))
+        try await expectState(.candidate(.init(text: "充值额度为10", original: "第一段")), in: session)
         session.cancel()
-        await settle()
+        try await expectState(.idle, in: session)
         for index in 0..<7 {
             session.update(.init(text: "持续讲话\(index)"))
             scheduler.advanceTo(scheduler.clock.addingTimeInterval(0.42))
         }
         #expect(session.state == .idle)
         scheduler.advanceTo(scheduler.clock.addingTimeInterval(0.07))
-        await settle()
-        #expect(session.state == .candidate(.init(text: "充值额度为10", original: "持续讲话6")))
+        let latest = CorrectionStatus.candidate(.init(text: "充值额度为10", original: "持续讲话6"))
+        try await expectState(latest, in: session)
         session.cancel()
+        try await expectState(.idle, in: session)
         scheduler.advanceTo(scheduler.clock.addingTimeInterval(10))
         await settle()
         #expect(session.state == .idle)
         // A new recording may contain exactly the same words.
         session.update(.init(text: "持续讲话6"))
         scheduler.advanceTo(scheduler.clock.addingTimeInterval(0.81))
-        await settle()
-        #expect(session.state == .candidate(.init(text: "充值额度为10", original: "持续讲话6")))
+        try await expectState(latest, in: session)
         await session.shutdown()
     }
 
@@ -103,7 +96,7 @@ private struct ProposedCorrector: TextCorrecting {
             scheduler.advanceTo(scheduler.clock.addingTimeInterval(0.8))
         }
         await corrector.release()
-        await settle()
+        try await expectState(.candidate(.init(text: "最新文字", original: "最新文字")), in: session)
         #expect(delivered == ["第一段", "最新文字"])
         #expect(await corrector.requests == ["第一段", "最新文字"])
         await session.shutdown()
@@ -121,32 +114,36 @@ private struct ProposedCorrector: TextCorrecting {
         scheduler.advanceTo(scheduler.clock.addingTimeInterval(atDeadline ? 3.01 : 0.81))
         session.update(.init(text: "更新后的下一稿"))
         await corrector.release()
-        await settle()
 
         if !atDeadline {
+            try await expectState(.candidate(.init(text: "第一稿", original: "第一稿")), in: session)
             #expect(await corrector.requests == ["第一稿"])
             scheduler.advanceTo(scheduler.clock.addingTimeInterval(0.79))
             await settle()
             #expect(await corrector.requests == ["第一稿"])
             scheduler.advanceTo(scheduler.clock.addingTimeInterval(0.02))
-            await settle()
         }
+        try await expectState(.candidate(.init(text: "更新后的下一稿", original: "更新后的下一稿")), in: session)
         #expect(await corrector.requests == ["第一稿", "更新后的下一稿"])
         await session.shutdown()
     }
 
-    @Test func finalCorrectionSkipsTheQuietTimerAndReusesTheSameRequest() async {
+    @Test func finalCorrectionSkipsTheQuietTimerAndReusesTheSameRequest() async throws {
         let scheduler = HistoricalScheduler(initialClock: Date(timeIntervalSince1970: 0))
         let corrector = GatedCorrector()
         let session = CorrectionSession(corrector: corrector, scheduler: scheduler)
         let final = CorrectionRequest(text: "最终转录。")
         session.update(.init(text: "未完成的转录"))
         #expect(session.prepareFinal(final))
-        await settle()
+        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while !(await corrector.started) {
+            try #require(ContinuousClock.now < deadline)
+            try await Task.sleep(for: .milliseconds(5))
+        }
         #expect(await corrector.requests == [final.text])
         #expect(session.prepareFinal(final))
         await corrector.release()
-        await settle()
+        try await expectState(.candidate(.init(text: final.text, original: final.text)), in: session)
         #expect(!session.prepareFinal(final))
         scheduler.advanceTo(scheduler.clock.addingTimeInterval(6))
         await settle()
@@ -158,15 +155,26 @@ private struct ProposedCorrector: TextCorrecting {
     @Test func finalTextProducesASeparateCandidateAndCancelResetsTheSession() async throws {
         let session = CorrectionSession(corrector: ProposedCorrector())
         session.run(.init(text: "充斥额图为10"))
-        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
-        while session.state == .idle && ContinuousClock.now < deadline { await Task.yield() }
-        #expect(session.state != .idle)
-        while session.state == .working && ContinuousClock.now < deadline { await Task.yield() }
-        #expect(session.state == .candidate(.init(text: "充值额度为10", original: "充斥额图为10")))
+        let result = try await waitForState(in: session) { $0 != .idle && $0 != .working }
+        #expect(result == .candidate(.init(text: "充值额度为10", original: "充斥额图为10")))
         session.cancel()
-        for _ in 0..<50 { await Task.yield() }
-        #expect(session.state == .idle)
+        try await expectState(.idle, in: session)
         await session.shutdown()
+    }
+
+    private func expectState(_ expected: CorrectionStatus, in session: CorrectionSession) async throws {
+        let actual = try await waitForState(in: session) { $0 == expected }
+        #expect(actual == expected)
+    }
+
+    private func waitForState(in session: CorrectionSession,
+                              matching predicate: @escaping (CorrectionStatus) -> Bool) async throws -> CorrectionStatus {
+        var states = session.states
+            .filter(predicate)
+            .timeout(.seconds(2), scheduler: MainScheduler.instance)
+            .take(1).values.makeAsyncIterator()
+        let state = try await states.next()
+        return try #require(state)
     }
 }
 
