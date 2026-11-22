@@ -11,7 +11,7 @@ report_failure() {
     printf 'Swift tests did not finish successfully in group %s. See %s\n' "$group" "$log" >&2
     if [ "${GITHUB_ACTIONS:-}" = true ]; then
         local details
-        details="$(grep -E '✘|[Ee]rror:|[Ff]ailed' "$log" | tail -n 8 || true)"
+        details="$(grep -Em 10 '✘|[Ee]rror:|[Ff]ailed' "$log" || true)"
         details="${details:-$(tail -n 4 "$log")}"
         details="${details//%/%25}"
         details="${details//$'\r'/%0D}"
@@ -36,6 +36,6 @@ run_group() {
     fi
 }
 
-run_group modules --skip 'WhisperE2ETests|QwenE2ETests|QwenASRE2ETests|QwenCorrectionCorpusE2ETests|realWhisperCommandLine|VoxloomApplicationTests|VoxloomPanelTests'
+run_group modules --no-parallel --skip 'WhisperE2ETests|QwenE2ETests|QwenASRE2ETests|QwenCorrectionCorpusE2ETests|realWhisperCommandLine|VoxloomApplicationTests|VoxloomPanelTests'
 run_group desktop-application --skip-build --no-parallel --filter VoxloomApplicationTests
 run_group desktop-panel --skip-build --no-parallel --filter VoxloomPanelTests
