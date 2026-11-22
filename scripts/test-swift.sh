@@ -5,14 +5,33 @@ project_root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$project_root"
 mkdir -p .build/reports
 
+report_failure() {
+    local group="$1"
+    local log="$2"
+    printf 'Swift tests did not finish successfully in group %s. See %s\n' "$group" "$log" >&2
+    if [ "${GITHUB_ACTIONS:-}" = true ]; then
+        local details
+        details="$(grep -E '✘|[Ee]rror:|[Ff]ailed' "$log" | tail -n 8 || true)"
+        details="${details:-$(tail -n 4 "$log")}"
+        details="${details//%/%25}"
+        details="${details//$'\r'/%0D}"
+        details="${details//$'\n'/%0A}"
+        printf '::error title=Swift tests (%s)::%s\n' "$group" "${details:-No test summary was produced.}"
+    fi
+}
+
 run_group() {
     local group="$1"
     local log=".build/reports/swift-${group}.log"
     shift
-    bash scripts/swift-command.sh test "$@" 2>&1 | tee "$log"
+    bash scripts/swift-command.sh test "$@" 2>&1 | tee "$log" || {
+        local result=$?
+        report_failure "$group" "$log"
+        return "$result"
+    }
     # SwiftPM can return zero if its test host exits before completing the run.
     if ! grep -Eq 'Test run with [1-9][0-9]* tests? in [1-9][0-9]* suites? passed' "$log"; then
-        printf 'Swift tests did not finish successfully in group %s. See %s\n' "$group" "$log" >&2
+        report_failure "$group" "$log"
         return 1
     fi
 }
