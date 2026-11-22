@@ -125,9 +125,9 @@ struct CommandLineTests {
         let exited = !child.isRunning
         if child.isRunning { _ = Darwin.kill(child.processIdentifier, SIGKILL) }
         if !exited, let enginePID { _ = Darwin.kill(enginePID, SIGKILL) }
-        child.waitUntilExit()
         #expect(enginePID != nil)
-        #expect(exited)
+        // A timed-out child must fail the test without blocking on another wait.
+        try #require(exited)
         #expect(child.terminationStatus == 130)
         if let enginePID { #expect(Darwin.kill(enginePID, 0) == -1) }
         if let job { #expect(!FileManager.default.fileExists(atPath: job)) }

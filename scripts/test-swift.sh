@@ -36,6 +36,7 @@ run_group() {
     fi
 }
 
-run_group modules --no-parallel --skip 'WhisperE2ETests|QwenE2ETests|QwenASRE2ETests|QwenCorrectionCorpusE2ETests|realWhisperCommandLine|VoxloomApplicationTests|VoxloomPanelTests'
-run_group desktop-application --skip-build --no-parallel --filter VoxloomApplicationTests
-run_group desktop-panel --skip-build --no-parallel --filter VoxloomPanelTests
+run_group modules --no-parallel --skip 'WhisperE2ETests|QwenE2ETests|QwenASRE2ETests|QwenCorrectionCorpusE2ETests|realWhisperCommandLine|VoxloomApplicationTests|VoxloomSampleApplicationTests|VoxloomPanelTests'
+run_group desktop-application --skip-build --no-parallel --filter '^VoxloomDesktopTests\.VoxloomApplicationTests/'
+run_group desktop-sample --skip-build --no-parallel --filter '^VoxloomDesktopTests\.VoxloomSampleApplicationTests/'
+run_group desktop-panel --skip-build --no-parallel --filter '^VoxloomDesktopTests\.VoxloomPanelTests/'

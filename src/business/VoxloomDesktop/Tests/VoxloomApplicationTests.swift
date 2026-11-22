@@ -120,7 +120,9 @@ import Testing
         app.settingsWindow.window?.orderOut(nil)
         app.overlay.panel.orderOut(nil)
     }
+}
 
+@MainActor struct VoxloomSampleApplicationTests {
     @Test func sampleUsesTheEditableOverlayAndCanBeCopiedOrCleared() async throws {
         _ = NSApplication.shared
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -182,11 +184,11 @@ import Testing
         await app.stop()
         app.overlay.panel.orderOut(nil)
     }
+}
 
-    private func findButton(labeled label: String, in view: NSView) -> NSButton? {
-        if let button = view as? NSButton, button.accessibilityLabel() == label || button.title == label { return button }
-        return view.subviews.lazy.compactMap { self.findButton(labeled: label, in: $0) }.first
-    }
+@MainActor private func findButton(labeled label: String, in view: NSView) -> NSButton? {
+    if let button = view as? NSButton, button.accessibilityLabel() == label || button.title == label { return button }
+    return view.subviews.lazy.compactMap { findButton(labeled: label, in: $0) }.first
 }
 
 private struct SampleRecognizer: SpeechRecognizer {
