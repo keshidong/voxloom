@@ -78,7 +78,9 @@ python3 scripts/smoke-qwen.py --app 'voxloom 0.3.2.app'  # 打包资源 E2E
 python3 scripts/smoke-whisper.py         # 已安装资源的真实模型 API/CLI E2E
 ```
 
-`check.py` 先构建插桩 CLI 和桌面 Demo，删除旧 CLI profile，再运行带覆盖率的 Swift 测试；用 `llvm-profdata` 合并本轮测试与 CLI 子进程数据，`llvm-cov` 导出测试、CLI 和 Demo 三个构建产物的映射。真实模型 E2E 另跑，不计入下层门槛。原始数据与日志保存在 `.build/reports/`，合并有告警、发现未知未映射源码或任一模块未达标时检查失败。工具脚本为开发设施，不属于应用 Swift 生产代码统计范围；当前未配置远端 CI。
+`check.py` 先构建带覆盖率插桩的 CLI、Demo 和桌面 App，再运行 Swift 测试。`llvm-profdata` 合并测试和 CLI 子进程数据，`llvm-cov` 导出行覆盖率。原始数据与日志保存在 `.build/reports/`。合并告警、未映射源码和覆盖率不达标都会使检查失败。测试工具脚本不计入应用 Swift 覆盖率。
+
+GitHub Actions 在推送 `main`、提交指向 `main` 的 PR 或手动运行时执行。macOS Runner 构建 Swift 产品，运行模块和桌面测试，包括 FLEURS 配对夹具检查，并执行 Python 协议和覆盖率检查。两个桌面测试套件分别启动测试进程。本机可用 `bash scripts/prepare-rx.sh` 安装测试依赖，再运行 `bash scripts/test-swift.sh` 复跑同一组 Swift 测试。Swift 覆盖率门槛、真实模型和设备测试仍通过本机命令单独检查。[流水线配置](../.github/workflows/ci.yml)
 
 真实模型 E2E 缺资源时直接失败；独立执行 Swift 测试时，真实资源相关用例有条件启用，出现跳过时不能据此宣称真实模型验收。安装与中文样本获取命令见 [README](../README.md)。
 
