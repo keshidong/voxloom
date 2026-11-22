@@ -27,8 +27,12 @@ private struct ProposedCorrector: TextCorrecting {
         while !(await corrector.cleaning) { await Task.yield() }
         await settle()
         await corrector.finishCleanup()
-        await settle()
-        #expect(session.state == .candidate(.init(text: "最新文字", original: "最新文字")))
+        var completed = session.states
+            .filter { $0 != .idle && $0 != .working }
+            .timeout(.seconds(2), scheduler: MainScheduler.instance)
+            .take(1).values.makeAsyncIterator()
+        let result = try await completed.next()
+        #expect(result == .candidate(.init(text: "最新文字", original: "最新文字")))
         await session.shutdown()
     }
     @Test func failureCanBeRetriedAndCancelledOldResultsCannotReplaceNewText() async throws {

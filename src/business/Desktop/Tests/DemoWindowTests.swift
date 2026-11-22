@@ -131,7 +131,10 @@ private struct ReviewCorrectorFixture: TextCorrecting {
     }
     func waitUntil(_ condition: () -> Bool) async throws {
         let deadline = ContinuousClock.now.advanced(by: .seconds(3))
-        while !condition() { try #require(ContinuousClock.now < deadline); await Task.yield() }
+        while !condition() {
+            try #require(ContinuousClock.now < deadline)
+            try await Task.sleep(for: .milliseconds(10))
+        }
     }
 
     @Test func defaultDesktopLaunchCreatesReadyWindowAndQuitsAfterCleanup() async throws {
