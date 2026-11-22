@@ -33,8 +33,18 @@
 {"clips":[{"audio":"slice-0001.wav","reference":"请打印三份。","language":"zh","vocabulary":"打印"}]}
 ```
 
+仓库自带 36 段 Google FLEURS 普通话测试集录音和参考文本，共约 384 秒。每段保留自然句长，范围 5.04–18.44 秒。常规测试验证每条参考都有可解码的音频。清单随附数据集版本、原文件和句子 ID。[来源与许可](../src/business/QwenASR/Tests/Fixtures/FLEURS/ATTRIBUTION.md)
+
 ```bash
-VOXLOOM_CORRECTION_CORPUS="$PWD/.build/general-correction/fleurs/evaluation.json" \
+bash scripts/swift-command.sh test --filter CorrectionCorpusTests
+VOXLOOM_CORRECTION_CORPUS="$PWD/src/business/QwenASR/Tests/Fixtures/FLEURS/manifest.json" \
+  bash scripts/swift-command.sh test --filter QwenCorrectionCorpusE2ETests
+```
+
+本机可选语料位于 `.runtime/correction-corpora/bilibili/`，该目录由 Git 忽略。B 站视频 `BV1NS4t6oEXQ` 的原声音轨与 458 条中文字幕配成 23 个窗口，每段 42.56–44.95 秒。相邻窗口约重叠 5 秒。`sample-manifest.json` 可用于快速跑其中 4 段。[视频来源](https://www.bilibili.com/video/BV1NS4t6oEXQ/)
+
+```bash
+VOXLOOM_CORRECTION_CORPUS="$PWD/.runtime/correction-corpora/bilibili/manifest.json" \
   bash scripts/swift-command.sh test --filter QwenCorrectionCorpusE2ETests
 ```
 
@@ -42,11 +52,11 @@ VOXLOOM_CORRECTION_CORPUS="$PWD/.build/general-correction/fleurs/evaluation.json
 
 提示词要求保留切片两端的残句，并在依据不足时照录人名、型号和代码标识。配送是检验通用指代判断的回归场景，覆盖同段同时描述送货和接送人。
 
-上一版提示词的历史结果保存在 `.build/paired-correction/`。视频原声音轨与 458 条中文字幕配成 23 个窗口，实际长度 42.56–44.95 秒，字符差异为 632 → 698。四段 45 秒合成样例为 17 → 15，更早一版提示词为 16。
+本次基线使用本机 Qwen ASR 和 Qwen3 纠错模型。FLEURS 的 1257 个参考字符中，原始转写有 125 处差异，纠错后有 132 处，36 段中有 4 段变差。B 站样本的 4 个窗口共 996 个参考字符，纠错前后均有 106 处差异。逐段统计见 `.build/reports/fleurs-corpus-e2e.log` 和 `.build/reports/bilibili-corpus-sample-e2e.log`。
 
-新增 36 段 FLEURS 普通话测试集的真人朗读及人工核对参考文本，共 383.92 秒。录音保持自然单句长度，范围 5.04–18.44 秒。清单 `.build/general-correction/fleurs/manifest.json` 记录原文件、句子 ID、数据集版本、许可和转换信息。每三段取首段组成固定的 12 段对照集，清单为同目录的 `evaluation.json`。[Google FLEURS 数据集（CC BY 4.0）](https://huggingface.co/datasets/google/fleurs)。
+上一版提示词的历史结果保存在 `.build/paired-correction/`。23 个视频窗口的字符差异为 632 → 698。四段 45 秒合成样例为 17 → 15，更早一版提示词为 16。
 
-通用提示词在这 12 段的原始转写为 65 处字符差异，旧提示词纠错后为 71 处，通用提示词纠错后为 68 处。两版纠错使用相同的 ASR 输出。两条提示词契约的 RED/GREEN 记录见 `.build/general-correction/prompt-red.log` 和 `prompt-green.log`。最终 99 项项目测试通过，行覆盖率 98.03%。真实 Qwen 冒烟测试通过 5 项，近音连错和配送指代两项仍有误改或漏改。对照结果见 `.build/general-correction/prompt-selected-ab.log` 和 `.build/reports/qwen-bundled-e2e.log`。
+历史 FLEURS 对照每三段取首段，组合成固定的 12 段。在这 12 段上，原始转写为 65 处字符差异，旧提示词纠错后为 71 处，通用提示词纠错后为 68 处。两版纠错使用相同的 ASR 输出。两条提示词契约的 RED/GREEN 记录见 `.build/general-correction/prompt-red.log` 和 `prompt-green.log`。当时 99 项项目测试通过，行覆盖率 98.03%。真实 Qwen 冒烟测试通过 5 项，近音连错和配送指代两项仍有误改或漏改。对照结果见 `.build/general-correction/prompt-selected-ab.log` 和 `.build/reports/qwen-bundled-e2e.log`。
 
 ### 草稿版验证记录
 

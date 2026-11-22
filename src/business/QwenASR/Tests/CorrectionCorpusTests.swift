@@ -3,6 +3,18 @@ import SpeechFoundation
 import Testing
 
 struct CorrectionCorpusTests {
+    @Test func bundledFLEURSHasPairedMandarinAudioForEveryReference() throws {
+        let manifest = try #require(Bundle.module.url(forResource: "manifest", withExtension: "json", subdirectory: "FLEURS"))
+        let corpus = try CorrectionCorpus(data: Data(contentsOf: manifest))
+        #expect(corpus.clips.count == 36)
+        for clip in corpus.clips {
+            #expect(clip.language == "zh")
+            let wav = manifest.deletingLastPathComponent().appendingPathComponent(clip.audio)
+            let audio = try clip.decodeAudio(Data(contentsOf: wav))
+            #expect(audio.samples.contains { $0 != 0 })
+        }
+    }
+
     @Test func corpusRequiresAReferenceForEveryUniqueLocalWAV() throws {
         let valid = Data(#"{"clips":[{"audio":"one.wav","reference":"请检查第7项。"}]}"#.utf8)
         let corpus = try CorrectionCorpus(data: valid)

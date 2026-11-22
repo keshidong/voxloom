@@ -22,7 +22,12 @@ let package = Package(
         .testTarget(name: "CLIArgumentTests", dependencies: ["SpeechFoundation"], path: "src/foundation/CLI/Tests"),
         .target(name: "SpeechInput", dependencies: ["SpeechFoundation", .product(name: "RxSwift", package: "RxSwift-6.10.2")], path: "src/business", exclude: ["Whisper/Tests", "Process/Tests", "CommandLine", "Live/Tests", "Capture/Tests", "Desktop", "VoxloomDesktop", "Qwen/Tests", "Correction/Tests", "QwenASR/Runtime", "QwenASR/Tests", "Dictation/Tests"]),
         .testTarget(name: "DictationSessionTests", dependencies: ["SpeechInput", "SpeechFoundation"], path: "src/business/Dictation/Tests"),
-        .testTarget(name: "QwenASRTests", dependencies: ["SpeechInput", "SpeechFoundation"], path: "src/business/QwenASR/Tests"),
+        .testTarget(
+            name: "QwenASRTests",
+            dependencies: ["SpeechInput", "SpeechFoundation"],
+            path: "src/business/QwenASR/Tests",
+            resources: [.copy("Fixtures/FLEURS")]
+        ),
         .testTarget(name: "QwenTests", dependencies: ["SpeechInput", "SpeechFoundation"], path: "src/business/Qwen/Tests"),
         .testTarget(name: "CorrectionSessionTests", dependencies: ["SpeechInput", "SpeechFoundation"], path: "src/business/Correction/Tests"),
         .testTarget(name: "LiveSessionTests", dependencies: ["SpeechInput", "SpeechFoundation"], path: "src/business/Live/Tests"),

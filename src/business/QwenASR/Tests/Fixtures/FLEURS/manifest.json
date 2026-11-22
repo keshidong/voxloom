@@ -1,0 +1,336 @@
+{
+  "source": "https://huggingface.co/datasets/google/fleurs",
+  "creator": "Google FLEURS",
+  "license": "CC-BY-4.0",
+  "revision": "3c5cd38623376cb92bc769d5193891b564853276",
+  "config": "cmn_hans_cn",
+  "split": "test",
+  "maxWindowSeconds": 45,
+  "audioChanges": "Converted to 16 kHz, mono, signed 16-bit PCM and renamed.",
+  "clips": [
+    {
+      "audio": "fleurs-01.wav",
+      "reference": "“这并不是告别。这是一个篇章的结束，也是新篇章的开始。”",
+      "language": "zh",
+      "sourceFile": "10026684690566417990.wav",
+      "sentenceID": 1906,
+      "seconds": 10.38,
+      "sourceSHA256": "a72c0b59fdba80850552af7991de07f9f4940846d2d70f0890eeb153c40f164b"
+    },
+    {
+      "audio": "fleurs-02.wav",
+      "reference": "钙、钾等元素属于金属，银和金等元素当然也是金属。",
+      "language": "zh",
+      "sourceFile": "10040380210557600780.wav",
+      "sentenceID": 2006,
+      "seconds": 8.28,
+      "sourceSHA256": "b39d2c84aefada280b73a9ab439726d370d45e5a75bd05f0a90153288ea4561b"
+    },
+    {
+      "audio": "fleurs-03.wav",
+      "reference": "桥下垂直净空 15 米。该项目于 2011 年 8 月完工，但直到 2017 年 3 月才开始通车。",
+      "language": "zh",
+      "sourceFile": "10048525650290665384.wav",
+      "sentenceID": 1883,
+      "seconds": 13.86,
+      "sourceSHA256": "aeb95366f4907daf8797d66797c87f6e002f10704e78e87a0c4b4521756a1616"
+    },
+    {
+      "audio": "fleurs-04.wav",
+      "reference": "适当使用博客，可以使学生变得更善于分析和进行思辨；通过积极回应网络材料，学生们可以在他人文章的上下文语境中找到自己的立场，并能够针对特定问题提出自己的观点（Oravec, 2002）。\"",
+      "language": "zh",
+      "sourceFile": "10053956375630517392.wav",
+      "sentenceID": 1852,
+      "seconds": 15.42,
+      "sourceSHA256": "d1274fd5e5ce0029473faa0df42bd714094428b853029d6f6c64ffd3f36a8afe"
+    },
+    {
+      "audio": "fleurs-05.wav",
+      "reference": "科学家们可以得出结论，暗物质对其他暗物质的影响方式与普通物质相同。",
+      "language": "zh",
+      "sourceFile": "10056338555786085046.wav",
+      "sentenceID": 1734,
+      "seconds": 12.9,
+      "sourceSHA256": "7cc0e10d7c4ad3297d1803ac968c996a747117edd75a6cec59e485a93bbe0fe9"
+    },
+    {
+      "audio": "fleurs-06.wav",
+      "reference": "大多数现代科研望远镜都是巨型设施，位于大气条件优良的偏远地区。",
+      "language": "zh",
+      "sourceFile": "10073099671796350432.wav",
+      "sentenceID": 1890,
+      "seconds": 13.74,
+      "sourceSHA256": "e07c342ae53173bec1c3d5f534073fa6368713f76e7b5ab9497b015b1020167f"
+    },
+    {
+      "audio": "fleurs-07.wav",
+      "reference": "1963 年大坝建成后，季节性洪水被控制住了，沉积物不再冲散到河流里。",
+      "language": "zh",
+      "sourceFile": "10081186303620187437.wav",
+      "sentenceID": 1721,
+      "seconds": 15.18,
+      "sourceSHA256": "379999ca5e729d35f81b0d62087e78f23481e0eb47bf8aca2c66208e90a072ce"
+    },
+    {
+      "audio": "fleurs-08.wav",
+      "reference": "它的长下颚上布满了 70 多颗剃刀般锋利的牙齿，上颚上还有一排。这意味着任何与它相遇的东西都无路可逃。",
+      "language": "zh",
+      "sourceFile": "10104380129516909856.wav",
+      "sentenceID": 1869,
+      "seconds": 15.46,
+      "sourceSHA256": "cd509460412479ebc989b962938881b47aad636eca388e890e3fd219e999b60d"
+    },
+    {
+      "audio": "fleurs-09.wav",
+      "reference": "Scotturb 403 路公共汽车定期发车前往辛特拉 (Sintra)，在罗卡角停靠。",
+      "language": "zh",
+      "sourceFile": "10112798408996336578.wav",
+      "sentenceID": 1805,
+      "seconds": 7.62,
+      "sourceSHA256": "714a1785c636060d6a8f284abcf786c876f70b07e0a8ea966c476abf1e890fe7"
+    },
+    {
+      "audio": "fleurs-10.wav",
+      "reference": "这里几乎都是沙滩，游泳很安全，大部分地方都有新西兰圣诞树的树荫。",
+      "language": "zh",
+      "sourceFile": "10134195680525011353.wav",
+      "sentenceID": 1965,
+      "seconds": 6.84,
+      "sourceSHA256": "52cd9b630b984ed486d69f8ee8dd841a57f875c752e1af411e0a39dabd3e00cb"
+    },
+    {
+      "audio": "fleurs-11.wav",
+      "reference": "当所有可用的资源在一个组织的职能部门之间得到有效利用时，创造力和独创性就会发生。",
+      "language": "zh",
+      "sourceFile": "10142207404499844309.wav",
+      "sentenceID": 1903,
+      "seconds": 7.26,
+      "sourceSHA256": "cd570cba752dd4214a9c6ec050759172932e4bc4df18ed2a2bb0d8a9e30172db"
+    },
+    {
+      "audio": "fleurs-12.wav",
+      "reference": "他随后被转送到剑桥的阿登布鲁克医院。",
+      "language": "zh",
+      "sourceFile": "10144930991730701959.wav",
+      "sentenceID": 1953,
+      "seconds": 5.04,
+      "sourceSHA256": "9f1ab1af9c909d2710aa3e1b0af70d490e2104b5992a47e4c59469e3068b939f"
+    },
+    {
+      "audio": "fleurs-13.wav",
+      "reference": "执政党西南非洲人民组织 (SWAPO) 也在议会选举中保持了多数席位。",
+      "language": "zh",
+      "sourceFile": "10147383166642115307.wav",
+      "sentenceID": 1830,
+      "seconds": 6.36,
+      "sourceSHA256": "3f4b1c4d04301904d8f33fad773e71ba13cc5adb69d96d241c3867ba6c13495e"
+    },
+    {
+      "audio": "fleurs-14.wav",
+      "reference": "巴黎人是出了名的以自我中心、粗鲁和傲慢。",
+      "language": "zh",
+      "sourceFile": "10154699825088384418.wav",
+      "sentenceID": 1910,
+      "seconds": 5.1,
+      "sourceSHA256": "49a1d118b44c83e35ce60df9ea90f54a89740551be65730728ea3175894f1ed1"
+    },
+    {
+      "audio": "fleurs-15.wav",
+      "reference": "起初，他被送往位于大雅茅斯的詹姆斯·佩吉特医院进行救治。",
+      "language": "zh",
+      "sourceFile": "1015891181557233386.wav",
+      "sentenceID": 1902,
+      "seconds": 6.96,
+      "sourceSHA256": "34dff751ff55dbd0c49fd83481ea2e3fe4d3d6d4e4e484fa8cb2bd7f325c5950"
+    },
+    {
+      "audio": "fleurs-16.wav",
+      "reference": "有些人认为他是对的，但也有很多人持相反意见；他们认为太阳系是围绕着地球运转的，太阳也是（甚至其他恒星也是）。",
+      "language": "zh",
+      "sourceFile": "1017060882143751441.wav",
+      "sentenceID": 1874,
+      "seconds": 18.44,
+      "sourceSHA256": "3396a3e3612d2451f4a1acb0f3ce9170a7b0db64ceb1e4aed149b4bc5f8e3b0d"
+    },
+    {
+      "audio": "fleurs-17.wav",
+      "reference": "就像月球对地球施加拉力，引起潮汐一样，银河系也对人马座星系施加着作用力。",
+      "language": "zh",
+      "sourceFile": "10182944938509562796.wav",
+      "sentenceID": 1763,
+      "seconds": 15.0,
+      "sourceSHA256": "ecd3e9b8e3398fa0ae3cbaf88db7d352b94573c154951a56876ac2380758ef8f"
+    },
+    {
+      "audio": "fleurs-18.wav",
+      "reference": "自由派人士对重建工作的批判主要集中在把重建合同授予了视为华盛顿内部人士的这一做法。",
+      "language": "zh",
+      "sourceFile": "10234433636571543908.wav",
+      "sentenceID": 1837,
+      "seconds": 13.96,
+      "sourceSHA256": "7c870b325837ea2f9eda66e507a0e51c5350ccb230c54286f87522a057d66e73"
+    },
+    {
+      "audio": "fleurs-19.wav",
+      "reference": "摩尔多瓦的首都是基希讷乌。当地语言是罗马尼亚语，但俄语也被广泛使用。",
+      "language": "zh",
+      "sourceFile": "10279011772105822622.wav",
+      "sentenceID": 1905,
+      "seconds": 7.56,
+      "sourceSHA256": "aa3163b32efca0893a63d3e706738380e8de8d1e8a521445ad06456658c9edc3"
+    },
+    {
+      "audio": "fleurs-20.wav",
+      "reference": "因此，很可能这个符号只是作为一个标签添加的。",
+      "language": "zh",
+      "sourceFile": "10325486695909573217.wav",
+      "sentenceID": 1772,
+      "seconds": 9.18,
+      "sourceSHA256": "ac5538ad679226aac725cf75dc42646a47f97fe607eeed444261a7757ce782dd"
+    },
+    {
+      "audio": "fleurs-21.wav",
+      "reference": "特朗普与土耳其总统雷杰普·塔伊普·埃尔多安（Recep Tayyip Erdoğan）通话后发表了声明。",
+      "language": "zh",
+      "sourceFile": "10325559490685159122.wav",
+      "sentenceID": 1779,
+      "seconds": 15.16,
+      "sourceSHA256": "8ef25b2f964e60f5aa25b11179d5a9c9182c66119c5333fc9e2e2d8e8d951b5f"
+    },
+    {
+      "audio": "fleurs-22.wav",
+      "reference": "这被称为化学物质的 pH 值。你可以使用红甘蓝汁制作指示剂。",
+      "language": "zh",
+      "sourceFile": "10343405611041314630.wav",
+      "sentenceID": 1792,
+      "seconds": 8.76,
+      "sourceSHA256": "c399b78e60770324e7f630e67063bbe090ad89510708ff1f9bd98533601eca9c"
+    },
+    {
+      "audio": "fleurs-23.wav",
+      "reference": "在昆达里尼瑜伽中，昆达里尼能量（启迪能量）通过瑜伽姿势、呼吸练习、念语和视觉形象被唤醒。",
+      "language": "zh",
+      "sourceFile": "10369927130798325266.wav",
+      "sentenceID": 1780,
+      "seconds": 15.68,
+      "sourceSHA256": "7fe486fad6f5d25438efa3d201d4c95b1654ccd836985200e9f7dd6eeefbeaba"
+    },
+    {
+      "audio": "fleurs-24.wav",
+      "reference": "pH 值以被测化学品中的氢（pH 中的 H）离子数量表示。",
+      "language": "zh",
+      "sourceFile": "10388181945260949729.wav",
+      "sentenceID": 1962,
+      "seconds": 8.46,
+      "sourceSHA256": "ae22ba9aae5bbaa3cbf6357c3c77c28fc287dd19972694273264397497fb7c07"
+    },
+    {
+      "audio": "fleurs-25.wav",
+      "reference": "具体说来，据说可以通过正确解读微表情来判断一个人是否在撒谎。",
+      "language": "zh",
+      "sourceFile": "10400579561005332584.wav",
+      "sentenceID": 1884,
+      "seconds": 6.9,
+      "sourceSHA256": "4944fffae7a34611d6ddbfb4b20bdca9f853216867c4f4b56be23a1b45d21495"
+    },
+    {
+      "audio": "fleurs-26.wav",
+      "reference": "这座城市与该国其他城市形成了鲜明对比，因为它更多的是阿拉伯风格，而不是非洲风格。",
+      "language": "zh",
+      "sourceFile": "10480388653191520950.wav",
+      "sentenceID": 1958,
+      "seconds": 9.66,
+      "sourceSHA256": "f2df2f22ebb505f9f1af8411ed0da69d7a496df66cf9a0d849c229ed28ac7936"
+    },
+    {
+      "audio": "fleurs-27.wav",
+      "reference": "在中东温暖的气候中，房子并不是多重要。",
+      "language": "zh",
+      "sourceFile": "10481669967989866997.wav",
+      "sentenceID": 1871,
+      "seconds": 6.96,
+      "sourceSHA256": "d83eb2739552b233229af2df27a5b882a790a8af6281ef7a323e72bd38b59618"
+    },
+    {
+      "audio": "fleurs-28.wav",
+      "reference": "它会攻击任何进入水中的东西；即使像霸王龙之类的巨型恐龙也不是它的对手。",
+      "language": "zh",
+      "sourceFile": "10540148133747674396.wav",
+      "sentenceID": 1738,
+      "seconds": 15.22,
+      "sourceSHA256": "a7e27bf2be8193c1c82bce2ef69f4198370f48b9e1b3e1cbf1b0acf010d90b5b"
+    },
+    {
+      "audio": "fleurs-29.wav",
+      "reference": "宇宙中的一切都由物质构成，而所有的物质都由被称为原子的微小粒子组成。",
+      "language": "zh",
+      "sourceFile": "10544065594858743613.wav",
+      "sentenceID": 1698,
+      "seconds": 9.72,
+      "sourceSHA256": "2009e6b155ac2b1dfe8aef5e585a46b313387be1f3868ac422331cc685419e61"
+    },
+    {
+      "audio": "fleurs-30.wav",
+      "reference": "他还参与了许多国家的纸币雕版制作，近期作品包括加拿大新版 5 元和 100 元纸币正面的总理肖像。",
+      "language": "zh",
+      "sourceFile": "1055783299672050865.wav",
+      "sentenceID": 1989,
+      "seconds": 11.16,
+      "sourceSHA256": "dd6e959df7374a7579e23c60091a206e74ee43de5832dec294385384b5ae00cc"
+    },
+    {
+      "audio": "fleurs-31.wav",
+      "reference": "早先于全球发布的华硕 Eee PC 个人笔记本，因成本节约及功能性因素，成为 2007 年台北 IT 资讯月备受瞩目的话题。",
+      "language": "zh",
+      "sourceFile": "10558410879827163654.wav",
+      "sentenceID": 1725,
+      "seconds": 12.12,
+      "sourceSHA256": "8dd8d4bc2caa032ce793c228a70d4b1333c41f293abe0c2b38b180ba47a11c31"
+    },
+    {
+      "audio": "fleurs-32.wav",
+      "reference": "自 1966 年以来，孙德尔本斯一直是野生动物保护区。据估计，目前该区生活着 400 只皇家孟加拉虎和大约 3 万只梅花鹿。",
+      "language": "zh",
+      "sourceFile": "10563386955236607431.wav",
+      "sentenceID": 1712,
+      "seconds": 11.94,
+      "sourceSHA256": "5a478dd626fa441fceae23b6e9fa13d91a42b8255dce010aacc01e42f21c2f03"
+    },
+    {
+      "audio": "fleurs-33.wav",
+      "reference": "它让玩家可以通过在空中移动设备来控制电子游戏中的运动和操作。",
+      "language": "zh",
+      "sourceFile": "10571681330551714048.wav",
+      "sentenceID": 2002,
+      "seconds": 6.78,
+      "sourceSHA256": "1a2ee4403d2a88e6f8b382da0ac60b2a787de3f93e5f2f6883203e6a7fec5532"
+    },
+    {
+      "audio": "fleurs-34.wav",
+      "reference": "海地正义与民主研究所 (Haitian Institute for Justice and Democracy) 引用的独立研究表明，是尼泊尔的联合国维和部队在不知情的情况下将这种疾病带到了海地。",
+      "language": "zh",
+      "sourceFile": "10604423531103587528.wav",
+      "sentenceID": 1804,
+      "seconds": 10.5,
+      "sourceSHA256": "6960bbf6bd77de8167addac9302f7bce490bf3ad0d29671f7273522c4e59cbc9"
+    },
+    {
+      "audio": "fleurs-35.wav",
+      "reference": "他没有设定削减数额，只是表示将根据中国的经济产出来决定数额。",
+      "language": "zh",
+      "sourceFile": "1061358881165519725.wav",
+      "sentenceID": 1661,
+      "seconds": 7.74,
+      "sourceSHA256": "35bda8450990ea1636e5bfbaea0a1c302042caaa87475919c8288ac1ebb0a05c"
+    },
+    {
+      "audio": "fleurs-36.wav",
+      "reference": "阴暗面下面的地壳薄一些，高地下的地壳厚一些。",
+      "language": "zh",
+      "sourceFile": "10651933140664828475.wav",
+      "sentenceID": 1700,
+      "seconds": 12.62,
+      "sourceSHA256": "2cd31babba1528867e2def730738ee4f333bcffe9bd2d113a4dcf2d7c574fd93"
+    }
+  ]
+}
