@@ -148,7 +148,11 @@ import Testing
         try #require(findButton(labeled: "草稿", in: rootView)).performClick(nil)
         app.overlay.sample.performClick(nil)
         let end = ContinuousClock.now.advanced(by: .seconds(2))
-        while !app.overlay.copy.isEnabled && ContinuousClock.now < end { await Task.yield() }
+        while !app.overlay.copy.isEnabled && ContinuousClock.now < end {
+            // Let the main queue deliver the sample and its transcription between checks.
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        try #require(app.overlay.copy.isEnabled)
         #expect(app.flow.usesSample)
         #expect(app.overlay.editor.string == "示例草稿")
         #expect(app.overlay.editor.isEditable)
