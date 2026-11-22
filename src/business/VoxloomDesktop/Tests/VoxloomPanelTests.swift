@@ -1,5 +1,6 @@
 import AppKit
 import Carbon
+import QuartzCore
 import SpeechFoundation
 import SpeechInput
 import Testing
@@ -202,15 +203,65 @@ import Testing
         await flow.shutdown()
     }
 
+    @Test func theVoiceBarWaveformFollowsSpeechAndReturnsToRest() async throws {
+        _ = NSApplication.shared
+        let overlay = VoxloomOverlay()
+        let capture = FlowCapture()
+        let flow = VoxloomFlow(settings: .init(), capture: { capture },
+            recognizer: { _ in WaitingRecognizer(finalization: AsyncStream { $0.finish() }) }, corrector: { _ in nil },
+            insertion: .init(foregroundTarget: { nil }, canPost: { false }, paste: { _, _ in false }))
+        let content = try #require(overlay.panel.contentView)
+        overlay.render(flow, availability: .init())
+        overlay.panel.orderFront(nil)
+        defer { overlay.panel.orderOut(nil) }
+        content.layoutSubtreeIfNeeded()
+        let waveform = try #require(findVisible(NSView.self, in: content, matching: {
+            $0.accessibilityIdentifier() == "dictation-waveform"
+        }))
+        let glyph = try #require(waveform.layer as? CAShapeLayer)
+        let idle = try #require(glyph.path)
+        let size = waveform.frame.size
+        #expect(size.width > 0 && size.height > 0)
+
+        flow.handle(.start)
+        try await reaches { capture.receive != nil }
+        overlay.render(flow, availability: .init())
+        let silence = try #require(glyph.path)
+        capture.receive?([800, -800])
+        try await reaches { flow.state?.live.samples.count == 2 }
+        overlay.render(flow, availability: .init())
+        let soft = try #require(glyph.path)
+        capture.receive?([9000, -9000])
+        try await reaches { flow.state?.live.samples.count == 4 }
+        overlay.render(flow, availability: .init())
+        let loud = try #require(glyph.path)
+        #expect(silence.boundingBoxOfPath.height < soft.boundingBoxOfPath.height)
+        #expect(soft.boundingBoxOfPath.height < loud.boundingBoxOfPath.height)
+        #expect((glyph.animationKeys()?.isEmpty == false) == !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
+        #expect(waveform.frame.size == size)
+
+        capture.receive?([0, 0])
+        try await reaches { flow.state?.live.samples.count == 6 }
+        overlay.render(flow, availability: .init())
+        #expect(glyph.path == silence)
+
+        flow.handle(.stop)
+        try await reaches { flow.state?.live.phase != .recording }
+        overlay.render(flow, availability: .init())
+        #expect(glyph.path == idle)
+        await flow.shutdown()
+    }
+
     private func reaches(_ predicate: () -> Bool) async throws {
         let end = ContinuousClock.now.advanced(by: .seconds(2))
         while !predicate() && ContinuousClock.now < end { await Task.yield() }
         try #require(predicate())
     }
 
-    private func findVisible<View: NSView>(_ type: View.Type, in view: NSView) -> View? {
-        if let match = view as? View, !match.isHiddenOrHasHiddenAncestor { return match }
-        return view.subviews.lazy.compactMap { findVisible(type, in: $0) }.first
+    private func findVisible<View: NSView>(_ type: View.Type, in view: NSView,
+                                           matching predicate: @escaping (View) -> Bool = { _ in true }) -> View? {
+        if let match = view as? View, !match.isHiddenOrHasHiddenAncestor, predicate(match) { return match }
+        return view.subviews.lazy.compactMap { findVisible(type, in: $0, matching: predicate) }.first
     }
 
     private func findButton(in view: NSView, labeled label: String) -> NSButton? {

@@ -70,7 +70,7 @@ import SpeechInput
     private let preview = LivePreviewLabel(labelWithString: "")
     private let model = NSTextField(labelWithString: "")
     private let shortcut = NSTextField(labelWithString: "松开 Fn 自动插入")
-    private let waveform = NSImageView(image: NSImage(systemSymbolName: "waveform", accessibilityDescription: nil) ?? NSImage())
+    private let waveform = VoiceWaveformView()
     private let meter = NSLevelIndicator()
     private let progress = NSProgressIndicator()
     private let placeholder = NSTextField(labelWithString: "转写会出现在这里")
@@ -120,8 +120,6 @@ import SpeechInput
     }
 
     private func makeBar() -> NSStackView {
-        waveform.contentTintColor = .systemMint
-        waveform.widthAnchor.constraint(equalToConstant: 22).isActive = true
         let close = NSButton(image: NSImage(systemSymbolName: "xmark", accessibilityDescription: "隐藏悬浮窗口") ?? NSImage(),
                              target: self, action: #selector(hide))
         close.isBordered = false
@@ -288,9 +286,10 @@ import SpeechInput
         case (false, _): "仅在 Voxloom 内响应 Fn"
         }
         model.stringValue = flow.settings.model.title
+        let level = min(1, (current?.live.level ?? 0) * 5)
         meter.isHidden = phase != .recording
-        meter.doubleValue = min(1, (current?.live.level ?? 0) * 5)
-        waveform.contentTintColor = phase == .recording && !flow.usesSample ? .systemOrange : .systemMint
+        meter.doubleValue = level
+        waveform.update(level: phase == .recording ? level : nil, isSample: flow.usesSample)
         let stateText = switch phase {
         case .authorizing: "等待麦克风授权"
         case .recording: "\(flow.usesSample ? "正在读取示例" : "正在录音")  \(Int(current?.live.seconds ?? 0)) 秒"
