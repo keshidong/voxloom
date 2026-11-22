@@ -18,7 +18,10 @@ for line in sys.stdin:
         print('x' * 65538, flush=True)
         continue
     if "hold" in value:
-        with open(value["hold"], "w") as file:
+        marker = value["hold"]
+        partial = marker + ".partial"
+        with open(partial, "w") as file:
             file.write(str(os.getpid()))
+        os.replace(partial, marker)
         time.sleep(60)
     print(json.dumps({"pid": os.getpid(), "text": value.get("text", "")}), flush=True)

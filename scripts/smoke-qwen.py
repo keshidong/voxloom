@@ -41,7 +41,7 @@ def main():
     with (REPORT / (stem + ".log")).open("w") as log:
         # Swift Testing runs unrelated top-level suites concurrently. Separate
         # invocations keep each GPU suite isolated without weakening deadlines.
-        for suite in ["QwenASRE2ETests", "QwenE2ETests"]:
+        for suite in [r"QwenASRTests\.QwenASRE2ETests/", r"QwenTests\.QwenE2ETests/"]:
             process = subprocess.Popen(["bash", "scripts/swift-command.sh", "test", "--skip-build",
                 "--filter", suite], cwd=ROOT, env=environment, stdout=log, stderr=subprocess.STDOUT)
             while process.poll() is None:
@@ -70,10 +70,10 @@ def main():
               "memoryMethod": "Darwin ri_phys_footprint summed across test process descendants, sampled about 100ms; shared mappings may be counted twice.",
               "host": "Apple M5 Pro / 48 GiB; this is a short pipeline smoke test, not 16 GiB / 8 GiB acceptance.",
               "execution": "GPU suites run sequentially; ordinary per-request deadlines remain enabled.",
-              "scope": "Real ASR zh/en/silence, ASR-to-LLM pipeline, repeated object references, valid person references, long dictation, prompt length variations and domain words; excludes AirPods and Watch."}
+              "scope": "Real ASR zh/en/silence, ASR-to-LLM pipeline, near-sound corrections and preservation, repeated references, long dictation, prompt length variations and domain words; excludes AirPods and Watch."}
     (REPORT / (stem + ".json")).write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n")
     print(json.dumps(result, ensure_ascii=False, indent=2))
-    if exit_code or len(passed) != 2 or count != 6 or "skipped" in content:
+    if exit_code or len(passed) != 2 or count != 8 or "skipped" in content:
         raise SystemExit("Qwen model E2E failed; inspect .build/reports/" + stem + ".log")
 
 

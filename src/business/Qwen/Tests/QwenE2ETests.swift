@@ -10,6 +10,42 @@ private let engine = bundleResources?.appendingPathComponent("llama-completion")
 
 @Suite(.serialized) struct QwenE2ETests {
     @Test(.enabled(if: FileManager.default.isExecutableFile(atPath: engine.path) && FileManager.default.fileExists(atPath: model.path)))
+    func interactiveDictationRepairsTermsAndRetainsNumbersAndSpokenText() async throws {
+        let corrector: any TextCorrecting = QwenTextCorrector(configuration: .init(executable: engine, model: model, mode: .interactive))
+        let examples: [(request: CorrectionRequest, required: [String])] = [
+            (.init(text: "图舒卡的充直额图以USD即价，每刺最少充直20。", vocabulary: "图书卡 充值额度 USD 计价"),
+             ["图书卡", "充值额度", "计价", "USD", "20"]),
+            (.init(text: "语文老师在四号窗口等我，后来送我回家。晚饭前加热1杯牛奶。",
+                   surroundingText: "档案号 ZEN-731，先前讨论的是图书馆。"),
+             ["语文老师", "四号窗口", "送我回家", "加热1杯牛奶"])
+        ]
+        for (index, example) in examples.enumerated() {
+            let start = ContinuousClock.now
+            let result = try await corrector.correct(example.request)
+            print("Interactive correction fixture \(index + 1): \(start.duration(to: .now))")
+            #expect(result.original == example.request.text)
+            #expect(!result.numbersChanged)
+            #expect(!result.text.contains("ZEN-731"))
+            for term in example.required { #expect(result.text.contains(term)) }
+        }
+    }
+
+    @Test(.enabled(if: FileManager.default.isExecutableFile(atPath: engine.path) && FileManager.default.fileExists(atPath: model.path)))
+    func pronunciationHintsHelpRepairContextualNearSoundsWithoutChangingCorrectWords() async throws {
+        let corrector: any TextCorrecting = QwenTextCorrector(configuration: .init(executable: engine, model: model))
+        let original = "请语文老司东计校刊共收到多少篇稿件，然后把贫审结果发给主编。茶已经凉了，先加乐到60度。"
+        let repaired = try await corrector.correct(.init(text: original))
+        #expect(repaired.original == original)
+        for phrase in ["老师", "统计", "评审", "加热"] { #expect(repaired.text.contains(phrase)) }
+        #expect(!repaired.numbersChanged)
+
+        let correct = "语文老师在四号窗口等我，后来送我回家。晚饭前加热1杯牛奶。"
+        let preserved = try await corrector.correct(.init(text: correct))
+        for phrase in ["老师", "四号窗口", "送我回家", "加热"] { #expect(preserved.text.contains(phrase)) }
+        #expect(!preserved.numbersChanged)
+    }
+
+    @Test(.enabled(if: FileManager.default.isExecutableFile(atPath: engine.path) && FileManager.default.fileExists(atPath: model.path)))
     func varyingPromptLengthsProduceNonemptyJSONCandidates() async throws {
         let corrector: any TextCorrecting = QwenTextCorrector(configuration: .init(executable: engine, model: model))
         for padding in [0, 21, 59, 117] {
@@ -37,6 +73,11 @@ private let engine = bundleResources?.appendingPathComponent("llama-completion")
         #expect(!delivered.text.contains("送他上门"))
         #expect(delivered.text.contains("上门") || delivered.text.contains("到家"))
         #expect(delivered.text.contains("书") || delivered.text.contains("货"))
+
+        let mixed = "书已经装进纸箱，司机说纸箱不能放在马路边，两个箱子都要送我上门，请你留下收件人的电话，不要把收据交给司机，明天上午十点以前送到就可以，楼下社区服务台可以代收。司机送我回家以后，再回到店里取第二件货。"
+        let exact = try await corrector.correct(.init(text: mixed))
+        #expect(exact.text == mixed.replacingOccurrences(of: "送我上门", with: "送货上门"))
+
         // Optional local-only diagnostics. Text comes from an explicitly named
         // private file, never from committed fixtures or test output.
         if let path = ProcessInfo.processInfo.environment["VOXLOOM_DIAGNOSTIC_CASE"] {

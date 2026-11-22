@@ -2,6 +2,16 @@ import Testing
 import SpeechFoundation
 
 struct LiveStateTests {
+    @Test func releaseDuringAuthorizationStopsAndIgnoresLatePermission() {
+        let awaiting = LiveReducer.reduce(LiveState(), .start).state
+        let released = LiveReducer.reduce(awaiting, .stop)
+        #expect(released.state.phase == .idle)
+        #expect(released.effects == [.stopCapture, .cancelRecognition])
+        let late = LiveReducer.reduce(released.state, .ready(awaiting.session))
+        #expect(late.state.phase == .idle)
+        #expect(late.effects.isEmpty)
+    }
+
     @Test func firstPreviewNeedsOneSecondThenUpdatesAtHalfSecondWithoutQueuing() {
         var state = LiveState()
         for event in [LiveEvent.start, .ready(1), .audio(1, Array(repeating: 1000, count: 16_000))] {
@@ -74,6 +84,27 @@ struct LiveStateTests {
         #expect(tail.state.submitted == 24_001)
         #expect(tail.effects.count == 1)
         #expect(LiveReducer.reduce(tail.state, .result(1, 24_001, "全部")).state.phase == .idle)
+    }
+
+    @Test func stoppingReusesTheResultWhenAllAudioHasAlreadyBeenRecognized() {
+        let text = String(repeating: "转写完成的一段内容。", count: 100)
+        let samples = [Int16](repeating: 1000, count: AudioClip.sampleRate * 45)
+        var state = LiveState()
+        for event in [LiveEvent.start, .ready(1), .audio(1, samples), .pulse, .result(1, samples.count, text)] {
+            state = LiveReducer.reduce(state, event).state
+        }
+        #expect(state.phase == .recording)
+        #expect(state.text == text)
+
+        let released = LiveReducer.reduce(state, .stop)
+        let finalPhase = released.state.phase
+        let reusedText = released.state.text == text
+        let stillProcessing = released.state.busy
+        let stoppedWithoutRecognition = released.effects == [.stopCapture]
+        #expect(finalPhase == .idle)
+        #expect(reusedText)
+        #expect(!stillProcessing)
+        #expect(stoppedWithoutRecognition)
     }
 
     @Test func silenceLimitAndFailureHaveBoundedRecovery() {

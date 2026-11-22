@@ -29,6 +29,35 @@ private struct ReviewCorrectorFixture: TextCorrecting {
 }
 
 @MainActor struct DemoWindowTests {
+    @Test func fnStartsRecordingAndTwoNewPressesConfirmTheKeyboardEditedDraft() async throws {
+        _ = NSApplication.shared
+        let capture = DemoCaptureFixture()
+        let controller = DemoWindowController(resources: .init(root: FileManager.default.temporaryDirectory),
+            captureFactory: { capture }, recognizerFactory: { _, _ in DemoRecognizerFixture() }, correctorFactory: { _ in nil })
+        let window = try #require(controller.window)
+        try sendFn(to: window, at: 1)
+        try await waitUntil { capture.sink != nil }
+        capture.sink?([1000, -1000])
+        try await waitUntil { controller.session?.state.samples.count == 2 }
+        controller.corrected.insertText("键盘补充。", replacementRange: NSRange(location: 0, length: 0))
+        try sendFn(to: window, at: 2)
+        #expect(controller.session?.state.phase == .recording)
+        try sendFn(to: window, at: 2.2)
+        try await waitUntil { controller.status.stringValue == "草稿已确认" }
+        #expect(controller.corrected.string == "键盘补充。界面转写测试")
+        #expect(!controller.corrected.isEditable)
+        await controller.shutdown()
+    }
+
+    private func sendFn(to window: NSWindow, at timestamp: Double) throws {
+        for (offset, flags): (Double, NSEvent.ModifierFlags) in [(0, .function), (0.05, [])] {
+            let event = try #require(NSEvent.keyEvent(with: .flagsChanged, location: .zero, modifierFlags: flags,
+                timestamp: timestamp + offset, windowNumber: window.windowNumber, context: nil,
+                characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: 63))
+            window.sendEvent(event)
+        }
+    }
+
     @Test func correctionAppearsWhileMicrophoneIsStillRecording() async throws {
         _ = NSApplication.shared
         let capture = DemoCaptureFixture()

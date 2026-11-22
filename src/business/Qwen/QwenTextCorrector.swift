@@ -2,12 +2,18 @@ import Foundation
 import SpeechFoundation
 
 public struct QwenConfiguration: Sendable {
+    /// Reviewed mode can make a second pass. Interactive mode returns the first verified edits.
+    public enum Mode: Sendable, Equatable { case reviewed, interactive }
+
     public let executable: URL
     public let model: URL
     public let useGPU: Bool
     public let timeout: Duration
-    public init(executable: URL, model: URL, useGPU: Bool = true, timeout: Duration = .seconds(45)) {
+    public let mode: Mode
+    public init(executable: URL, model: URL, useGPU: Bool = true, timeout: Duration = .seconds(45),
+                mode: Mode = .reviewed) {
         self.executable = executable; self.model = model; self.useGPU = useGPU; self.timeout = timeout
+        self.mode = mode
     }
 }
 
@@ -29,7 +35,9 @@ public actor QwenTextCorrector: TextCorrecting {
     public func correct(_ request: CorrectionRequest) async throws -> CorrectionCandidate {
         try Task.checkCancellation()
         guard !busy else { throw CorrectionError.busy }
-        _ = try CorrectionPrompt.build(request)
+        let includesAnalysis = configuration.mode == .reviewed
+        let passes = includesAnalysis ? 2 : 1
+        let initialPlan = try CorrectionPrompt.plan(request, includesAnalysis: includesAnalysis)
         guard configuration.executable.isFileURL, configuration.model.isFileURL, configuration.timeout > .zero
         else { throw CorrectionError.invalidConfiguration }
         guard FileManager.default.isExecutableFile(atPath: configuration.executable.path) else { throw CorrectionError.engineUnavailable }
@@ -46,7 +54,7 @@ public actor QwenTextCorrector: TextCorrecting {
         defer { try? FileManager.default.removeItem(at: job) }
         let deadline = now().advanced(by: configuration.timeout)
         var current = request
-        for pass in 0..<2 {
+        for pass in 0..<passes {
             try Task.checkCancellation()
             let remaining = now().duration(to: deadline)
             if remaining <= .zero {
@@ -54,24 +62,29 @@ public actor QwenTextCorrector: TextCorrecting {
                 throw CorrectionError.timedOut
             }
             let result: (candidate: CorrectionCandidate, hasEdits: Bool)
-            do { result = try await generate(current, job: job, timeout: remaining) }
+            do {
+                let plan = pass == 0 ? initialPlan : try CorrectionPrompt.plan(current)
+                result = try await generate(current, plan: plan, job: job, timeout: remaining)
+            }
             catch is CancellationError { throw CancellationError() }
             catch {
                 try Task.checkCancellation()
                 if pass > 0 { return CorrectionCandidate(text: current.text, original: request.text) }
                 throw error
             }
-            if pass == 1 || !result.hasEdits || result.candidate.text.utf8.count > 3000 {
+            if pass == passes - 1 || !result.hasEdits || result.candidate.text.utf8.count > 3000 {
+                if pass == 0 { return result.candidate }
                 return CorrectionCandidate(text: result.candidate.text, original: request.text)
             }
-            current = CorrectionRequest(text: result.candidate.text, vocabulary: request.vocabulary)
+            current = CorrectionRequest(text: result.candidate.text, vocabulary: request.vocabulary,
+                                        surroundingText: request.surroundingText)
         }
         throw CorrectionError.invalidResult
     }
 
-    private func generate(_ request: CorrectionRequest, job: URL, timeout: Duration) async throws -> (candidate: CorrectionCandidate, hasEdits: Bool) {
+    private func generate(_ request: CorrectionRequest, plan: CorrectionPrompt.GenerationPlan, job: URL,
+                          timeout: Duration) async throws -> (candidate: CorrectionCandidate, hasEdits: Bool) {
         try Task.checkCancellation()
-        let plan = try CorrectionPrompt.plan(request)
         let input = job.appendingPathComponent("prompt.txt")
         let output = job.appendingPathComponent("result.json")
         do {
@@ -80,7 +93,10 @@ public actor QwenTextCorrector: TextCorrecting {
             guard FileManager.default.createFile(atPath: output.path, contents: Data(), attributes: [.posixPermissions: 0o600])
             else { throw CorrectionError.fileAccess }
         } catch { throw CorrectionError.fileAccess }
-        let schema = #"{"type":"object","properties":{"analysis":{"type":"string","maxLength":80},"edits":{"type":"array","maxItems":16,"items":{"type":"object","properties":{"from":{"type":"string","minLength":2},"to":{"type":"string"}},"required":["from","to"],"additionalProperties":false}}},"required":["analysis","edits"],"additionalProperties":false}"#
+        let edits = #""edits":{"type":"array","maxItems":16,"items":{"type":"object","properties":{"from":{"type":"string","minLength":2},"to":{"type":"string"}},"required":["from","to"],"additionalProperties":false}}"#
+        let analysis = configuration.mode == .reviewed ? #""analysis":{"type":"string","maxLength":80},"# : ""
+        let required = configuration.mode == .reviewed ? #""analysis","edits""# : #""edits""#
+        let schema = #"{"type":"object","properties":{\#(analysis)\#(edits)},"required":[\#(required)],"additionalProperties":false}"#
         // This completion engine checks EOG after every logical batch, including
         // prompt batches. Consume the whole prompt before that check. Physical
         // microbatches remain small to bound compute workspace.

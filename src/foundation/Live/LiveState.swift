@@ -52,11 +52,14 @@ public enum LiveReducer {
             effects.append(.recognize(state.session, state.samples))
         }
         func finish() {
-            state.phase = .finishing
             state.level = 0
             effects.append(.stopCapture)
-            if !state.hasVoice { state.phase = .idle }
-            else if !state.busy { submit() }
+            if !state.hasVoice || (!state.busy && state.submitted == state.samples.count) {
+                state.phase = .idle
+            } else {
+                state.phase = .finishing
+                submit()
+            }
         }
         switch event {
         case .start where state.phase == .idle:
@@ -90,7 +93,8 @@ public enum LiveReducer {
             state.busy = false
             state.error = message
             effects = [.stopCapture, .cancelRecognition]
-        case .cancel:
+        case .cancel,
+             .stop where state.phase == .authorizing:
             state.session += 1
             state.phase = .idle
             state.level = 0

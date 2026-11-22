@@ -23,6 +23,7 @@ def main():
     REPORTS.mkdir(parents=True, exist_ok=True)
     run(["bash", "scripts/swift-command.sh", "build", "--product", "voice-input", "--enable-code-coverage"], "build.log")
     run(["bash", "scripts/swift-command.sh", "build", "--product", "voice-demo", "--enable-code-coverage"], "build-demo.log")
+    run(["bash", "scripts/swift-command.sh", "build", "--product", "voxloom", "--enable-code-coverage"], "build-voxloom.log")
     # Never merge profiles left over from another build or real-model E2E run.
     cli_profiles = ROOT / ".build/cli-profiles"
     cli_profiles.mkdir(parents=True, exist_ok=True)
@@ -30,7 +31,7 @@ def main():
         for profile in directory.glob("*.profraw"):
             profile.unlink()
     output = run(["bash", "scripts/swift-command.sh", "test", "--enable-code-coverage",
-                  "--skip", "WhisperE2ETests|QwenE2ETests|QwenASRE2ETests|realWhisperCommandLine"], "tests.log")
+                  "--skip", "WhisperE2ETests|QwenE2ETests|QwenASRE2ETests|QwenCorrectionCorpusE2ETests|realWhisperCommandLine"], "tests.log")
     passed = re.search(r"Test run with (\d+) tests in (\d+) suites passed", output.decode(errors="replace"))
     if not passed:
         raise SystemExit("No successful Swift Testing result found; see .build/reports/tests.log")
@@ -45,7 +46,8 @@ def main():
         raise SystemExit("Coverage merge reported a warning; see .build/reports/merge.log")
     exported = run(["xcrun", "llvm-cov", "export",
                     str(binaries / "VoiceInputPackageTests.xctest/Contents/MacOS/VoiceInputPackageTests"),
-                    "-object", str(binaries / "voice-input"), "-object", str(binaries / "voice-demo"), f"-instr-profile={merged}"], "coverage.json")
+                    "-object", str(binaries / "voice-input"), "-object", str(binaries / "voice-demo"),
+                    "-object", str(binaries / "voxloom"), f"-instr-profile={merged}"], "coverage.json")
     files = {}
     for dataset in json.loads(exported)["data"]:
         for entry in dataset["files"]:

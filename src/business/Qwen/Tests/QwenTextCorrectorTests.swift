@@ -9,6 +9,29 @@ private struct CorrectionRunner: CommandRunning {
 }
 
 struct QwenTextCorrectorTests {
+    @Test func interactiveCorrectionReturnsTheFirstVerifiedEditsWithoutAnAnalysisOrReviewPass() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = root.appendingPathComponent("model.gguf")
+        try Data().write(to: model)
+        let runner = ReviewRunner()
+        let provider = QwenTextCorrector(configuration: .init(executable: URL(fileURLWithPath: "/usr/bin/true"),
+            model: model, mode: .interactive), runner: runner, temporaryDirectory: root)
+        let request = CorrectionRequest(text: "第一箱必须把我搬上楼，第二箱也要把我搬上楼。", surroundingText: "两箱货是纸箱。")
+        let result = try await provider.correct(request)
+        #expect(result.text == "第一箱必须把纸箱搬上楼，第二箱也要把我搬上楼。")
+        #expect(result.original == request.text)
+        #expect(await runner.calls == 1)
+        let schema = try #require(await runner.lastSchema)
+        #expect(schema.contains(#""required":["edits"]"#))
+        #expect(!schema.contains(#""analysis""#))
+        let prompt = try #require(await runner.lastPrompt)
+        #expect(prompt.contains(#""pinyin":"#))
+        #expect(prompt.contains(request.surroundingText))
+        #expect(!prompt.contains("analysis"))
+    }
+
     @Test func reviewFailurePreservesTheVerifiedDraftAndCancellationStillThrows() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -123,6 +146,8 @@ struct QwenTextCorrectorTests {
             let file = URL(fileURLWithPath: args[promptIndex + 1])
             let prompt = try String(contentsOf: file, encoding: .utf8)
             #expect(prompt.contains("充值额度"))
+            #expect(prompt.contains(#""pinyin":"chōng chì é tú"#))
+            #expect(prompt.contains(#""vocabularyPinyin":"chōng zhí é dù USD"#))
             #expect(args.contains("--no-conversation"))
             #expect(args.contains("--json-schema"))
             let batchIndex = try #require(args.firstIndex(of: "--batch-size"))
@@ -166,6 +191,8 @@ private final class ExpiredCorrectionClock: @unchecked Sendable {
 
 private actor ReviewRunner: CommandRunning {
     var calls = 0
+    var lastSchema: String?
+    var lastPrompt: String?
     let failReview: Bool
     let suspendReview: Bool
     init(failReview: Bool = false, suspendReview: Bool = false) { self.failReview = failReview; self.suspendReview = suspendReview }
@@ -174,10 +201,13 @@ private actor ReviewRunner: CommandRunning {
         if calls == 2 && failReview { throw RecognitionError.engineUnavailable }
         if calls == 2 && suspendReview { try await Task.sleep(for: .seconds(60)) }
         let prompt = URL(fileURLWithPath: arguments[arguments.firstIndex(of: "--file")! + 1])
+        lastSchema = arguments[arguments.firstIndex(of: "--json-schema")! + 1]
+        lastPrompt = try String(contentsOf: prompt, encoding: .utf8)
         let result = calls == 1 ? #"{"edits":[{"from":"第一箱必须把我搬上楼","to":"第一箱必须把纸箱搬上楼"}]}"# : #"{"edits":[{"from":"把我搬上楼","to":"把纸箱搬上楼"}]}"#
         if calls == 2 {
-            let content = try String(contentsOf: prompt, encoding: .utf8)
+            let content = try #require(lastPrompt)
             #expect(content.contains("第一箱必须把纸箱搬上楼"))
+            #expect(content.contains("bǎ zhǐ xiāng bān shàng lóu"))
         }
         try Data(result.utf8).write(to: prompt.deletingLastPathComponent().appendingPathComponent("result.json"))
         return 0
