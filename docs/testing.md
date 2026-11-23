@@ -80,7 +80,7 @@ python3 scripts/smoke-whisper.py         # 已安装资源的真实模型 API/CL
 
 `check.py` 先构建带覆盖率插桩的 CLI、Demo 和桌面 App，再运行 Swift 测试。`llvm-profdata` 合并测试和 CLI 子进程数据，`llvm-cov` 导出行覆盖率。原始数据与日志保存在 `.build/reports/`。合并告警、未映射源码和覆盖率不达标都会使检查失败。测试工具脚本不计入应用 Swift 覆盖率。
 
-GitHub Actions 在推送 `main`、创建或更新指向 `main` 的 PR 或手动运行时执行。macOS Runner 构建 Swift 产品，串行运行模块和桌面测试，包括 FLEURS 配对夹具检查，并执行 Python 协议和覆盖率检查。Demo 窗口、桌面 App 生命周期、内置示例和悬浮面板各自使用独立的测试进程。本机可用 `bash scripts/prepare-rx.sh` 安装测试依赖，再运行 `bash scripts/test-swift.sh` 复跑这些 Swift 测试。Swift 覆盖率门槛、真实模型和设备测试仍通过本机命令单独检查。[流水线配置](../.github/workflows/ci.yml)
+GitHub Actions 在推送 `main`、创建或更新指向 `main` 的 PR 或手动运行时执行。macOS 15 Runner 构建 Swift 产品，串行运行模块和桌面测试，包括 FLEURS 配对夹具检查，并执行 Python 协议和覆盖率检查。Demo 窗口、桌面 App 生命周期、内置示例和悬浮面板各自使用独立的测试进程。本机可用 `bash scripts/prepare-rx.sh` 安装测试依赖，再运行 `bash scripts/test-swift.sh` 复跑这些 Swift 测试。Swift 覆盖率门槛、真实模型和设备测试仍通过本机命令单独检查。[流水线配置](../.github/workflows/ci.yml)
 
 真实模型 E2E 缺资源时直接失败；独立执行 Swift 测试时，真实资源相关用例有条件启用，出现跳过时不能据此宣称真实模型验收。安装与中文样本获取命令见 [README](../README.md)。
 
