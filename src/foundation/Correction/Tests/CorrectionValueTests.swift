@@ -28,6 +28,30 @@ struct CorrectionValueTests {
         #expect(data["vocabularyPinyin"] == "tú shū kǎ USD")
     }
 
+    @Test func mixedSpeechInstructionsKeepEachLanguageAndAbstainWithoutClearEvidence() throws {
+        let request = CorrectionRequest(text: "先把 draft 存下来，然后再 review。")
+        let prompt = try CorrectionPrompt.build(request, includesAnalysis: false)
+        let instructions = try systemInstructions(from: prompt)
+        #expect(instructions.contains("保留各片段原有的语言和书写系统"))
+        #expect(instructions.contains("禁止翻译、音译或把汉字转为拼音"))
+        #expect(instructions.contains("读音提示只用于比对"))
+        #expect(instructions.contains("即使说法与常识冲突"))
+        #expect(instructions.contains("证据不足时返回空 edits"))
+        let data = try payload(from: prompt)
+        #expect(data["text"] == request.text)
+        #expect(data["pinyin"] == nil)
+        #expect(data["vocabularyPinyin"] == nil)
+    }
+
+    @Test func interactivePromptIncludesPronunciationForAnExplicitVocabulary() throws {
+        let request = CorrectionRequest(text: "先把 draft 存下来。", vocabulary: "版本库")
+        let data = try payload(from: CorrectionPrompt.build(request, includesAnalysis: false))
+        #expect(data["text"] == request.text)
+        #expect(data["vocabulary"] == request.vocabulary)
+        #expect(data["pinyin"]?.contains("draft") == true)
+        #expect(data["vocabularyPinyin"] == "bǎn běn kù")
+    }
+
     @Test func englishWithoutHanDoesNotDuplicateTextAsPinyin() throws {
         let request = CorrectionRequest(text: "Café at 10 AM.", vocabulary: "RxSwift")
         let prompt = try CorrectionPrompt.build(request)
@@ -75,19 +99,25 @@ struct CorrectionValueTests {
         let requests: [CorrectionRequest] = [
             .init(text: "请检查模块接口", vocabulary: "RxSwift"),
             .init(text: "这个包裹需要配送", vocabulary: "邮政"),
-            .init(text: "画里的窗框要描细一点")
+            .init(text: "画里的窗框要描细一点", vocabulary: "透视")
         ]
-        let instructions = try requests.map { try systemInstructions(from: CorrectionPrompt.build($0)) }
-        let usesSameInstructions = Set(instructions).count == 1
-        #expect(usesSameInstructions)
+        for group in [requests, requests.map { CorrectionRequest(text: $0.text) }] {
+            for includesAnalysis in [false, true] {
+                let instructions = try group.map {
+                    try systemInstructions(from: CorrectionPrompt.build($0, includesAnalysis: includesAnalysis))
+                }
+                #expect(Set(instructions).count == 1)
+            }
+        }
     }
 
     @Test func systemInstructionsContainNoFixedPhraseSubstitutions() throws {
-        let prompt = try CorrectionPrompt.build(.init(text: "请把快递寄到前台。"))
-        let instruction = try systemInstructions(from: prompt)
         let existingExamples = ["加乐食物", "东计销量", "语文老司", "项目贫审", "打映3份", "单刺购买", "送我上门", "把我发到群里"]
-        let substitutions = existingExamples.filter { instruction.contains($0) }
-        #expect(substitutions.isEmpty)
+        for includesAnalysis in [false, true] {
+            let prompt = try CorrectionPrompt.build(.init(text: "请把快递寄到前台。"), includesAnalysis: includesAnalysis)
+            let instructions = try systemInstructions(from: prompt)
+            #expect(existingExamples.allSatisfy { !instructions.contains($0) })
+        }
     }
     @Test func contextualModelEditsPreferTheCompletePhraseOverItsContainedWord() throws {
         let data = Data(#"{"edits":[{"from":"充直","to":"充值"},{"from":"充直额图","to":"充值额度"}]}"#.utf8)

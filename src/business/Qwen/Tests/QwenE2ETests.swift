@@ -9,6 +9,17 @@ private let model = bundleResources?.appendingPathComponent("Qwen3-4B-Instruct-2
 private let engine = bundleResources?.appendingPathComponent("llama-completion") ?? root.appendingPathComponent(".runtime/llama-build/bin/llama-completion")
 
 @Suite(.serialized) struct QwenE2ETests {
+    @Test(.enabled(if: FileManager.default.isExecutableFile(atPath: engine.path) && FileManager.default.fileExists(atPath: model.path)),
+          arguments: [
+              CorrectionRequest(text: "哦哦，寄去南桥，南桥，好像还得等三天。", vocabulary: "北桥"),
+              CorrectionRequest(text: "先确认 cache 里存了两份，两份，然后把第二份给……", vocabulary: "Cash Flow")
+          ])
+    func interactiveVocabularyPreservesSpokenWordsWhenATermIsOnlyAPartialMatch(_ request: CorrectionRequest) async throws {
+        let corrector = QwenTextCorrector(configuration: .init(executable: engine, model: model, mode: .interactive))
+        let result = try await corrector.correct(request)
+        #expect(result.text == request.text)
+    }
+
     @Test(.enabled(if: FileManager.default.isExecutableFile(atPath: engine.path) && FileManager.default.fileExists(atPath: model.path)))
     func interactiveDictationRepairsTermsAndRetainsNumbersAndSpokenText() async throws {
         let corrector: any TextCorrecting = QwenTextCorrector(configuration: .init(executable: engine, model: model, mode: .interactive))

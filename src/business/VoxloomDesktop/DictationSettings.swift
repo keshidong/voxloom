@@ -17,7 +17,7 @@ enum RecognitionModel: String, CaseIterable {
 struct DictationSettings: Equatable {
     var model: RecognitionModel = .qwen
     var language: RecognitionLanguage = .automatic
-    var correctsText = true
+    var correctsText = false
     var usesGPU = true
     var usesInputContext = true
     var vocabulary = ""
@@ -28,7 +28,7 @@ struct DictationSettings: Equatable {
         let saved = defaults.dictionary(forKey: Self.key)
         model = (saved?["model"] as? String).flatMap(RecognitionModel.init(rawValue:)) ?? .qwen
         language = (saved?["language"] as? String).flatMap(RecognitionLanguage.init(rawValue:)) ?? .automatic
-        correctsText = saved?["correction"] as? Bool ?? true
+        correctsText = saved?["correction"] as? Bool ?? correctsText
         usesGPU = saved?["gpu"] as? Bool ?? true
         usesInputContext = saved?["inputContext"] as? Bool ?? true
         vocabulary = saved?["vocabulary"] as? String ?? ""

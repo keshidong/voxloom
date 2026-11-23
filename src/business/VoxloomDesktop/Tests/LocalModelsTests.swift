@@ -14,6 +14,8 @@ struct LocalModelsTests {
         let models = LocalModels(root: root)
         var settings = DictationSettings()
         #expect(models.recognizer(for: settings) is QwenASRRecognizer)
+        #expect(models.corrector(for: settings) == nil)
+        settings.correctsText = true
         #expect(models.corrector(for: settings) is QwenTextCorrector)
         for model in [RecognitionModel.whisperBase, .whisperTiny, .whisperTurbo] {
             settings.model = model

@@ -25,18 +25,7 @@ struct CorrectionCorpus {
     static func score(_ text: String, reference: String) -> Score {
         let expected = characters(in: reference)
         let actual = characters(in: text)
-        var row = Array(0...expected.count)
-        for (offset, character) in actual.enumerated() {
-            var diagonal = row[0]
-            row[0] = offset + 1
-            for (index, target) in expected.enumerated() {
-                let column = index + 1
-                let above = row[column]
-                row[column] = min(above + 1, row[index] + 1, diagonal + (character == target ? 0 : 1))
-                diagonal = above
-            }
-        }
-        return Score(referenceCharacters: expected.count, edits: row[expected.count])
+        return Score(referenceCharacters: expected.count, edits: ASRAccuracy.editDistance(expected, actual))
     }
 
     private static func characters(in text: String) -> [Character] {

@@ -41,9 +41,36 @@
 
 测试方式随实现选择，不要求全部业务测试采用 Rx*。纯函数直接验证输入输出，普通异步流程通过可控依赖验证结果；只有采用 Rx* 编排的流程使用对应语言的虚拟调度器与事件时间线，例如 RxSwift 的 RxTest/TestScheduler。超时测试使用可控时钟或调度器，不使用真实 sleep。真实设备识别准确率与延迟另行测量，不能从虚拟时间测试推导。
 
-本地 STT 模型对比使用同一批人工校对的测试录音和明确的文本归一化规则。分别报告中文 CER、英文 WER、混说与术语正确率，以及首结果/最终结果延迟、冷/热启动、内存和能耗；记录模型、量化和推理引擎版本。模型识别效果与工程代码覆盖率分别验收，不把高代码覆盖率当成识别准确率。当前只有中英文公开短录音的真实模型冒烟结果，尚无足够录音集的准确率或资源基准。
+本地 STT 模型对比使用同一批人工校对的测试录音和明确的文本归一化规则。分别报告中文 CER、英文 WER、混说与术语正确率，以及首结果/最终结果延迟、冷/热启动、内存和能耗；记录模型、量化和推理引擎版本。模型识别效果与工程代码覆盖率分别验收，不把高代码覆盖率当成识别准确率。公开短录音和小规模双语对照用于建立初步基线。
 
 内存验收覆盖整个输入法进程树及模型，不只统计权重或单个主进程，也不以磁盘大小当作运行内存。统一物理内存计量口径，核对共享 CPU/GPU 缓冲，防止漏计或重复计算；同时记录系统内存压力和 swap，不能只凭未崩溃判断可运行。分别报告 STT/LLM 加载、推理、卸载及整体峰值，连续轮次检查是否持续增长；8GB 是验收上限，方案中的 5–7GB 是待实测估算。时延报告区分冷/热状态，并包含 p50/p95；具体芯片和性能阈值仍待确定。
+
+## 普通话、英语和中英混说准确率
+
+FLEURS 普通话和英语测试集以及 ASCEND 混说测试组共 1,965 段录音。全量结果及关闭 Voxloom 默认纠错的依据见[评测报告](reports/transcription-evaluation-2026-11-23.md)。
+
+ASR 阶段用同一份录音清单对比包内 Qwen3-ASR 1.7B 4-bit 和 Whisper large-v3-turbo Q5_0。纠错阶段读取已经保存的 Qwen 原始转写，用包内 Qwen3-4B-Instruct-2507 单轮纠错，以原始转写作为对照。两个评分函数的输入都是参考稿和文本。命令行入口负责调用模型与读写文件。
+
+```bash
+bash scripts/transcription-eval/run.sh build
+python3 -B scripts/transcription-eval/test_runner.py
+evaluation=.build/reports/bilingual-eval
+resources=Voxloom.app/Contents/Resources
+"$evaluation/transcription-eval" asr /path/to/audio-manifest.json "$resources" "$evaluation/asr.json"
+"$evaluation/transcription-eval" correction "$evaluation/asr.json" "$resources" "$evaluation/correction.json"
+```
+
+清单的 `clips` 数组逐条提供 `id`、16 kHz 单声道 PCM16 WAV 的 `audio` 路径、`reference` 和 `group`（`zh`、`en`、`mixed`）。两个 ASR 都使用自动语言识别。普通话用 CER，按字符计。英语用 WER，按单词计。中英混说用 MER，把汉字和英文单词作为同一序列里的单位。每组错误率用总编辑次数除以总参考单位数。评分统一大小写、全半角和汉字繁简，通常忽略标点，保留词内撇号和数字内的小数点。数字按原写法计分。纠错报告同时记录每段的改善、持平或变差。ASR 报告保存原始转写，供后续纠错对照。
+
+初步 ASR 对照使用 FLEURS（CC BY 4.0）测试集的 36 段普通话（`cmn_hans_cn`）和 16 段英语（`en_us`），以及 ASCEND（CC BY-SA 4.0）测试集的 16 段自然中英混说。混说组覆盖两位说话者。每次推理的耗时包含模型调用和处理，实际听写的录音、界面和粘贴另行计时。[FLEURS](https://huggingface.co/datasets/google/fleurs) · [ASCEND](https://huggingface.co/datasets/CAiRE/ASCEND)
+
+纠错阶段也支持直接读取开放纠错基准发布的原始转写和参考稿。清单的 `clips` 数组逐条提供 `id`、`group`、`reference` 和 `transcript`。本机使用 ChineseHP（Apache 2.0）的 AISHELL-1 test 和 HyPoradise-v0（MIT）的 LibriSpeech test-other，按样本 ID 的 SHA-256 排序后分别取前 64 条。中文 ID 用 `chinesehp-` 加原始句 ID，英文 ID 用 `hyporadise-ls-other-` 加从零开始的五位行号。每条使用发布方的第一条候选，保留原本正确的样本以观察误改。清单记录数据版本与原文件哈希。[ChineseHP](https://github.com/tzyll/ChineseHP/tree/main/data/aishell-1/test) · [HyPoradise-v0](https://huggingface.co/datasets/PeacefulData/HyPoradise-v0/tree/main/test)
+
+```bash
+"$evaluation/transcription-eval" correction-dataset \
+  /path/to/transcript-manifest.json "$resources" \
+  "$evaluation/open-correction/correction.json"
+```
 
 ## 覆盖率门槛
 

@@ -3,6 +3,24 @@ import Testing
 @testable import VoxloomDesktop
 
 struct DictationSettingsTests {
+    @Test func correctionIsOffByDefaultAndCanBeEnabled() throws {
+        let identifier = UUID().uuidString
+        let defaults = try #require(UserDefaults(suiteName: identifier))
+        defer { defaults.removePersistentDomain(forName: identifier) }
+
+        #expect(!DictationSettings().correctsText)
+        #expect(!DictationSettings(defaults: defaults).correctsText)
+
+        defaults.set(["language": "zh", "inputContext": true], forKey: "dictation.settings")
+        var settings = DictationSettings(defaults: defaults)
+        #expect(!settings.correctsText)
+        #expect(settings.usesInputContext)
+
+        settings.correctsText = true
+        settings.save(to: defaults)
+        #expect(DictationSettings(defaults: defaults).correctsText)
+    }
+
     @Test func savedModelsAndOptionsLoadIntoANewSettingsInstance() throws {
         let identifier = UUID().uuidString
         let defaults = try #require(UserDefaults(suiteName: identifier))

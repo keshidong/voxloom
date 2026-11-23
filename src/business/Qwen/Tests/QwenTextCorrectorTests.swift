@@ -27,7 +27,8 @@ struct QwenTextCorrectorTests {
         #expect(schema.contains(#""required":["edits"]"#))
         #expect(!schema.contains(#""analysis""#))
         let prompt = try #require(await runner.lastPrompt)
-        #expect(prompt.contains(#""pinyin":"#))
+        #expect(prompt.contains(request.text))
+        #expect(!prompt.contains(#""pinyin":"#))
         #expect(prompt.contains(request.surroundingText))
         #expect(!prompt.contains("analysis"))
     }
