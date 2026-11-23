@@ -21,6 +21,7 @@ public extension AudioCapturing {
     private let bag = DisposeBag()
     private let scheduler: any SchedulerType
     private let capture: any AudioCapturing
+    private let ownsRecognizer: Bool
     private var authorization: Task<Void, Never>?
     private var recognition: Task<Void, Never>?
     private var clock: (any Disposable)?
@@ -29,9 +30,12 @@ public extension AudioCapturing {
     public var states: Observable<LiveState> { output.asObservable() }
     public var sourceDescription: String { capture.sourceDescription }
 
-    public init(capture: any AudioCapturing, scheduler: any SchedulerType = MainScheduler.instance) {
+    /// Pass `ownsRecognizer: false` when the caller will shut down a recognizer shared across sessions.
+    public init(capture: any AudioCapturing, scheduler: any SchedulerType = MainScheduler.instance,
+                ownsRecognizer: Bool = true) {
         self.capture = capture
         self.scheduler = scheduler
+        self.ownsRecognizer = ownsRecognizer
         input.observe(on: MainScheduler.asyncInstance)
             .scan(LiveReducer.reduce(LiveState(), .pulse)) { previous, event in
                 LiveReducer.reduce(previous.state, event)
@@ -54,6 +58,8 @@ public extension AudioCapturing {
     public func clear() { input.onNext(.clear) }
 
     public func shutdown() async {
+        let provider = recognizer
+        recognizer = nil
         capture.stop()
         clock?.dispose()
         authorization?.cancel()
@@ -61,7 +67,7 @@ public extension AudioCapturing {
         // A system permission prompt may ignore task cancellation. It has not
         // started owned audio work; its eventual reply is checked for cancellation.
         await recognition?.value
-        await recognizer?.shutdown()
+        if ownsRecognizer { await provider?.shutdown() }
     }
 
     private func perform(_ effect: LiveEffect) {

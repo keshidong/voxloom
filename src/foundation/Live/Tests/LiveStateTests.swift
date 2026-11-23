@@ -12,18 +12,22 @@ struct LiveStateTests {
         #expect(late.effects.isEmpty)
     }
 
-    @Test func firstPreviewNeedsOneSecondThenUpdatesAtHalfSecondWithoutQueuing() {
-        var state = LiveState()
-        for event in [LiveEvent.start, .ready(1), .audio(1, Array(repeating: 1000, count: 16_000))] {
-            state = LiveReducer.reduce(state, event).state
-        }
-        let first = LiveReducer.reduce(state, .pulse)
-        #expect(first.effects.count == 1)
-        state = LiveReducer.reduce(first.state, .audio(1, Array(repeating: 1000, count: 8_000))).state
-        #expect(LiveReducer.reduce(state, .pulse).effects.isEmpty)
-        let next = LiveReducer.reduce(state, .result(1, 16_000, "预览"))
+    @Test func firstPreviewSubmitsOnArrivalOfOneSecondOfAudioWithoutWaitingForATick() {
+        let started = LiveReducer.reduce(LiveState(), .start).state
+        let recording = LiveReducer.reduce(started, .ready(1)).state
+        let sampleRate = AudioClip.sampleRate
+        let almostOneSecond = [Int16](repeating: 1000, count: sampleRate - 1)
+        let partial = LiveReducer.reduce(recording, .audio(1, almostOneSecond))
+        #expect(partial.effects.isEmpty)
+        let first = LiveReducer.reduce(partial.state, .audio(1, [1000]))
+        let submittedFullSecond = first.effects == [.recognize(1, almostOneSecond + [1000])]
+        #expect(submittedFullSecond)
+        let more = LiveReducer.reduce(first.state, .audio(1, Array(repeating: 1000, count: sampleRate / 2)))
+        #expect(more.effects.isEmpty)
+        #expect(LiveReducer.reduce(more.state, .pulse).effects.isEmpty)
+        let next = LiveReducer.reduce(more.state, .result(1, sampleRate, "预览"))
         #expect(next.effects.count == 1)
-        #expect(next.state.submitted == 24_000)
+        #expect(next.state.submitted == sampleRate + sampleRate / 2)
     }
     @Test func startRequestsPermissionAndIgnoresRepeatedStart() {
         let first = LiveReducer.reduce(LiveState(), .start)
@@ -41,10 +45,9 @@ struct LiveStateTests {
         #expect(ready.state.phase == .recording)
         #expect(ready.effects == [.capture(1)])
         let voiced = [Int16](repeating: 1000, count: 24_000)
-        let audio = LiveReducer.reduce(ready.state, .audio(1, voiced)).state
-        #expect(audio.seconds == 1.5)
-        #expect(audio.level > 0)
-        let first = LiveReducer.reduce(audio, .pulse)
+        let first = LiveReducer.reduce(ready.state, .audio(1, voiced))
+        #expect(first.state.seconds == 1.5)
+        #expect(first.state.level > 0)
         let firstMatches = first.effects == [.recognize(1, voiced)]
         #expect(firstMatches)
         let more = LiveReducer.reduce(first.state, .audio(1, voiced)).state

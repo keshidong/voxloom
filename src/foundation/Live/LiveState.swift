@@ -43,6 +43,8 @@ public struct LiveTransition: Sendable {
 
 public enum LiveReducer {
     public static func reduce(_ previous: LiveState, _ event: LiveEvent) -> LiveTransition {
+        let firstPreviewSamples = AudioClip.sampleRate
+        let refreshSamples = AudioClip.sampleRate / 2
         var state = previous
         var effects: [LiveEffect] = []
         func submit() {
@@ -75,16 +77,16 @@ public enum LiveReducer {
             state.level = samples.isEmpty ? 0 : sqrt(samples.reduce(0.0) { $0 + pow(Double($1) / 32768, 2) } / Double(samples.count))
             state.hasVoice = state.hasVoice || state.level > 0.002
             if state.samples.count == AudioClip.maximumSamples { finish() }
+            else if state.submitted == 0 && state.samples.count >= firstPreviewSamples { submit() }
         case .pulse where state.phase == .recording:
-            let required = state.submitted == 0 ? 16_000 : 8_000
-            if state.samples.count - state.submitted >= required { submit() }
+            if state.submitted > 0 && state.samples.count - state.submitted >= refreshSamples { submit() }
         case .result(let session, let revision, let text) where session == state.session && state.busy && revision == state.submitted:
             state.text = text
             state.busy = false
             if state.phase == .finishing {
                 if state.submitted == state.samples.count { state.phase = .idle }
                 else { submit() }
-            } else if state.samples.count - state.submitted >= 8_000 { submit() }
+            } else if state.samples.count - state.submitted >= refreshSamples { submit() }
         case .stop where state.phase == .recording:
             finish()
         case .failed(let session, let message) where session == state.session && state.phase != .idle:

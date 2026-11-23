@@ -5,6 +5,55 @@ import Testing
 @testable import VoxloomDesktop
 
 @MainActor struct VoxloomFlowTests {
+    @Test func consecutiveDictationsReuseTheLoadedEngineAndApplyNewRecognitionOptions() async throws {
+        let capture = FlowCapture()
+        let recognizer = ResidentFlowRecognizer()
+        var posted: [String] = []
+        let flow = VoxloomFlow(settings: .init(), capture: { capture }, recognizer: { _ in recognizer },
+            corrector: { _ in nil }, insertion: .init(foregroundTarget: { 101 }, canPost: { true },
+                paste: { text, _ in posted.append(text); return true }, captureFocus: { _ in { true } }))
+
+        for language in [RecognitionLanguage.chinese, .english] {
+            var settings = flow.settings
+            settings.language = language
+            flow.apply(settings)
+            try await recordShortClip(in: flow, capture: capture)
+        }
+
+        #expect(posted == ["语音草稿", "English draft"])
+        #expect(await recognizer.loads == 1)
+        #expect(await recognizer.loaded)
+        await flow.shutdown()
+        #expect(await !recognizer.loaded)
+    }
+
+    @Test func switchingModelsReleasesThePreviousEngineBeforeTheNextRecording() async throws {
+        let capture = FlowCapture()
+        let qwen = ResidentFlowRecognizer()
+        let whisper = ResidentFlowRecognizer()
+        let flow = VoxloomFlow(settings: .init(), capture: { capture },
+            recognizer: { $0.model == .qwen ? qwen : whisper }, corrector: { _ in nil },
+            insertion: .init(foregroundTarget: { 101 }, canPost: { false }, paste: { _, _ in false }))
+
+        func record(using model: RecognitionModel) async throws {
+            var settings = flow.settings
+            settings.model = model
+            flow.apply(settings)
+            try await recordShortClip(in: flow, capture: capture)
+        }
+
+        try await record(using: .qwen)
+        #expect(await qwen.loaded)
+        try await record(using: .whisperTiny)
+        #expect(await !qwen.loaded)
+        #expect(await whisper.loaded)
+        try await record(using: .qwen)
+        #expect(await !whisper.loaded)
+        #expect(await qwen.loads == 2)
+        await flow.shutdown()
+        #expect(await !qwen.loaded)
+    }
+
     @Test func holdingFnCapturesOneContextAndTurningItOffSkipsTheNextRead() async throws {
         let capture = FlowCapture()
         let recognizer = ContextSinkRecognizer()
@@ -159,6 +208,15 @@ import Testing
         await flow.shutdown()
     }
 
+    private func recordShortClip(in flow: VoxloomFlow, capture: FlowCapture) async throws {
+        flow.handle(.start)
+        try await reaches { capture.receive != nil }
+        capture.receive?([3000, -3000])
+        try await reaches { flow.state?.live.samples.count == 2 }
+        flow.handle(.stop)
+        try await reaches { flow.canStart }
+    }
+
     private func reaches(_ predicate: () -> Bool) async throws {
         let clock = ContinuousClock()
         let end = clock.now.advanced(by: .seconds(1))
@@ -180,6 +238,21 @@ private struct FlowRecognizer: SpeechRecognizer {
     func transcribe(_ audio: AudioClip, options: RecognitionOptions) async throws -> Transcript {
         .init(text: "语音草稿")
     }
+}
+
+private actor ResidentFlowRecognizer: SpeechRecognizer {
+    private(set) var loaded = false
+    private(set) var loads = 0
+
+    func transcribe(_ audio: AudioClip, options: RecognitionOptions) async throws -> Transcript {
+        if !loaded {
+            loaded = true
+            loads += 1
+        }
+        return .init(text: options.language == .english ? "English draft" : "语音草稿")
+    }
+
+    func shutdown() async { loaded = false }
 }
 
 private actor ContextSinkRecognizer: SpeechRecognizer {

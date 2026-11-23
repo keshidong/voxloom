@@ -24,9 +24,13 @@ import RxSwift
 }
 
 actor FixedRecognizer: SpeechRecognizer {
+    private(set) var didShutdown = false
+
     func transcribe(_ audio: AudioClip, options: RecognitionOptions) async throws -> Transcript {
         Transcript(text: "实时中文 English", language: "zh")
     }
+
+    func shutdown() async { didShutdown = true }
 }
 
 @MainActor struct LiveSpeechSessionTests {
@@ -37,7 +41,7 @@ actor FixedRecognizer: SpeechRecognizer {
             await Task.yield()
         }
     }
-    @Test func clicksAudioAndVirtualTicksProduceTextBeforeStop() async throws {
+    @Test func audioProducesTheFirstPreviewWithoutAdvancingTheClock() async throws {
         let capture = FakeCapture()
         let clock = HistoricalScheduler(initialClock: Date(timeIntervalSince1970: 0))
         let session = LiveSpeechSession(capture: capture, scheduler: clock)
@@ -46,7 +50,6 @@ actor FixedRecognizer: SpeechRecognizer {
         #expect(session.state.phase == .recording)
         capture.sink?(Array(repeating: 1000, count: 24_000))
         try await waitUntil { session.state.samples.count == 24_000 }
-        clock.advanceTo(Date(timeIntervalSince1970: 2))
         try await waitUntil { !session.state.text.isEmpty }
         #expect(session.state.text == "实时中文 English")
         #expect(session.state.phase == .recording)
@@ -57,6 +60,16 @@ actor FixedRecognizer: SpeechRecognizer {
         session.clear()
         try await waitUntil { session.state.text.isEmpty }
         await session.shutdown()
+    }
+
+    @Test(arguments: [true, false])
+    func stoppingASessionClosesOnlyTheRecognizerItOwns(ownsRecognizer: Bool) async throws {
+        let recognizer = FixedRecognizer()
+        let session = LiveSpeechSession(capture: FakeCapture(), ownsRecognizer: ownsRecognizer)
+        session.start(recognizer: recognizer)
+        try await waitUntil { session.state.phase == .recording }
+        await session.shutdown()
+        #expect(await recognizer.didShutdown == ownsRecognizer)
     }
 
     @Test func permissionAndCaptureFailuresAreVisibleAndRecoverable() async throws {

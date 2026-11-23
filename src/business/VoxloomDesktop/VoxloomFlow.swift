@@ -10,6 +10,15 @@ import SpeechInput
         case manual(CaretInsertion.Destination)
         case automatic(CapturedTarget)
     }
+    private struct RecognitionEngine: Equatable {
+        let model: RecognitionModel
+        let usesGPU: Bool
+
+        init(_ settings: DictationSettings) {
+            model = settings.model
+            usesGPU = settings.model != .qwen && settings.usesGPU
+        }
+    }
 
     private(set) var settings: DictationSettings
     var state: DictationState? { session?.state }
@@ -30,13 +39,14 @@ import SpeechInput
     }
 
     private let capture: () -> any AudioCapturing
-    private let recognizer: (DictationSettings) -> any SpeechRecognizer
+    private let makeRecognizer: (DictationSettings) -> any SpeechRecognizer
     private let corrector: (DictationSettings) -> (any TextCorrecting)?
     private let insertion: CaretInsertion
     private let readInputContext: () -> (@Sendable () async -> String)?
     private var session: DictationSession?
     private var observation: (any Disposable)?
     private var startup: Task<Void, Never>?
+    private var activeEngine: (configuration: RecognitionEngine, recognizer: any SpeechRecognizer)?
     private var heldRecording = false
     private var recordingTarget: CapturedTarget?
     private var insertionRequest: InsertionRequest?
@@ -47,7 +57,7 @@ import SpeechInput
          readInputContext: @escaping () -> (@Sendable () async -> String)? = { nil }) {
         self.settings = settings
         self.capture = capture
-        self.recognizer = recognizer
+        makeRecognizer = recognizer
         self.corrector = corrector
         self.insertion = insertion
         self.readInputContext = readInputContext
@@ -108,6 +118,7 @@ import SpeechInput
         startup?.cancel()
         await startup?.value
         await session?.shutdown()
+        await releaseRecognizer()
     }
 
     private func begin(_ audio: any AudioCapturing, held: Bool) {
@@ -115,7 +126,7 @@ import SpeechInput
         let selected = settings
         let existingText = didSendInsertion ? "" : (previous?.state.text ?? "")
         let contextReader = held && selected.usesInputContext ? readInputContext() : nil
-        let next = DictationSession(live: LiveSpeechSession(capture: audio), existingText: existingText,
+        let next = DictationSession(live: LiveSpeechSession(capture: audio, ownsRecognizer: false), existingText: existingText,
                                     readInputContext: contextReader)
         notice = nil
         heldRecording = held
@@ -132,14 +143,30 @@ import SpeechInput
         startup = Task { [weak self] in
             await previous?.shutdown()
             guard let self, session === next else { return }
-            startup = nil
-            if !Task.isCancelled {
-                next.start(recognizer: recognizer(selected),
+            if !Task.isCancelled, let provider = await recognizer(for: selected) {
+                next.start(recognizer: provider,
                            options: .init(language: selected.language, context: selected.vocabulary))
             }
+            startup = nil
             onChange?()
         }
         onChange?()
+    }
+
+    private func recognizer(for settings: DictationSettings) async -> (any SpeechRecognizer)? {
+        let configuration = RecognitionEngine(settings)
+        if let activeEngine, activeEngine.configuration == configuration { return activeEngine.recognizer }
+        await releaseRecognizer()
+        guard !Task.isCancelled else { return nil }
+        let recognizer = makeRecognizer(settings)
+        activeEngine = (configuration, recognizer)
+        return recognizer
+    }
+
+    private func releaseRecognizer() async {
+        let engine = activeEngine
+        activeEngine = nil
+        await engine?.recognizer.shutdown()
     }
 
     private func stopRecording(automatic: Bool) {
