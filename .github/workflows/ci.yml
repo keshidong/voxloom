@@ -19,6 +19,8 @@ jobs:
     name: macOS build and tests
     runs-on: macos-15
     timeout-minutes: 20
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
     defaults:
       run:
         shell: bash
@@ -31,6 +33,7 @@ jobs:
       - name: Show toolchain versions
         run: |
           sw_vers
+          xcodebuild -version
           swift --version
           python3 --version
 
@@ -41,7 +44,19 @@ jobs:
         run: python3 scripts/check-python.py
 
       - name: Build Swift products
-        run: bash scripts/swift-command.sh build
+        run: |
+          mkdir -p .build/reports
+          log=.build/reports/swift-build.log
+          bash scripts/swift-command.sh build 2>&1 | tee "$log" || {
+            result=$?
+            details="$(grep -im 8 'error:' "$log" || true)"
+            details="${details:-$(tail -n 8 "$log")}"
+            details="${details//%/%25}"
+            details="${details//$'\r'/%0D}"
+            details="${details//$'\n'/%0A}"
+            printf '::error title=Swift build::%s\n' "${details:-The build produced no diagnostics.}"
+            exit "$result"
+          }
 
       - name: Run Swift module and desktop tests
         run: bash scripts/test-swift.sh
