@@ -2,7 +2,7 @@ import AppKit
 import QuartzCore
 
 @MainActor final class VoiceWaveformView: NSView {
-    private static let size = NSSize(width: 22, height: 20)
+    static let size = NSSize(width: 22, height: 20)
     private static let lineWidth: CGFloat = 2
     private static let spacing: CGFloat = 4
     private static let bars: [(resting: CGFloat, quiet: CGFloat, peak: CGFloat)] = [
@@ -18,7 +18,7 @@ import QuartzCore
             widthAnchor.constraint(equalToConstant: Self.size.width),
             heightAnchor.constraint(equalToConstant: Self.size.height)
         ])
-        update(level: nil, isSample: false)
+        update(level: nil)
     }
 
     required init?(coder: NSCoder) { nil }
@@ -32,9 +32,9 @@ import QuartzCore
     }
 
     /// The level is normalized to 0...1. Nil returns the glyph to its resting shape.
-    func update(level: Double?, isSample: Bool) {
+    func update(level: Double?) {
         guard let glyph = layer as? CAShapeLayer else { return }
-        let tint: NSColor = level != nil && !isSample ? .systemOrange : .systemMint
+        let tint: NSColor = level != nil ? .systemOrange : .systemMint
         let target = makePath(level: level)
         let changed = glyph.path != target
         let previous = glyph.presentation()?.path ?? glyph.path

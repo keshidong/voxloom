@@ -38,36 +38,90 @@ import Testing
         await flow.shutdown()
     }
 
-    @Test func overlayFloatsAcrossSpacesAndCanFocusItsEditor() {
+    @Test func theBarFloatsAcrossSpacesAndOnlyTheDraftCanTakeKeyboardFocus() throws {
         _ = NSApplication.shared
-        let panel = VoxloomPanel()
+        let overlay = VoxloomOverlay()
+        let panel = overlay.panel
         #expect(panel.level == .floating)
         #expect(panel.collectionBehavior.contains(.canJoinAllSpaces))
         #expect(panel.collectionBehavior.contains(.fullScreenAuxiliary))
         #expect(panel.styleMask.contains(.nonactivatingPanel))
         #expect(panel.becomesKeyOnlyIfNeeded)
         #expect(!panel.hidesOnDeactivate)
-        #expect(panel.canBecomeKey)
+        #expect(!panel.canBecomeKey)
         #expect(!panel.canBecomeMain)
+        let editorWindow = try #require(overlay.editor.window)
+        #expect(editorWindow.canBecomeKey)
+        #expect(!editorWindow.canBecomeMain)
+    }
+
+    @Test func showingTheVoiceBarOnTheFocusedDisplayMovesItOnlyWhenNeeded() throws {
+        _ = NSApplication.shared
+        let screen = try #require(NSScreen.main)
+        let bounds = screen.visibleFrame
+        let focusedArea = NSRect(x: bounds.midX, y: bounds.minY, width: bounds.width / 2, height: bounds.height)
+        let panel = VoxloomPanel()
+        defer { panel.orderOut(nil) }
+        panel.setFrameOrigin(NSPoint(x: bounds.minX + 16, y: bounds.minY + 22))
+
+        panel.showOnActiveDisplay(in: focusedArea)
+        #expect(focusedArea.contains(panel.frame))
+        #expect(panel.frame.midX == focusedArea.midX)
+
+        let dragged = NSPoint(x: focusedArea.minX + 8, y: focusedArea.minY + 68)
+        panel.setFrameOrigin(dragged)
+        panel.showOnActiveDisplay(in: focusedArea)
+        #expect(panel.frame.origin == dragged)
     }
 
     @Test func theVoiceBarRevealsAndCollapsesTheDraftOnDemand() throws {
         _ = NSApplication.shared
         let overlay = VoxloomOverlay()
+        overlay.panel.orderFrontRegardless()
+        defer { overlay.panel.orderOut(nil) }
         let collapsed = overlay.panel.frame
+        let barWindowNumber = overlay.panel.windowNumber
         #expect(collapsed.height <= 64)
         #expect(overlay.editor.isHiddenOrHasHiddenAncestor)
 
         let content = try #require(overlay.panel.contentView)
-        let draft = try #require(findButton(in: content, labeled: "草稿"))
+        let draft = try #require(findButton(in: content, labeled: "展开草稿"))
+        let settings = try #require(findButton(in: content, labeled: "设置"))
+        content.layoutSubtreeIfNeeded()
+        let settingsFrame = overlay.panel.convertToScreen(settings.convert(settings.bounds, to: nil))
+        #expect(draft.title == "展开")
         draft.performClick(nil)
-        #expect(overlay.panel.frame.height >= 200)
-        #expect(overlay.panel.frame.minY == collapsed.minY)
-        #expect(overlay.panel.frame.midX == collapsed.midX)
-        #expect(!overlay.editor.isHiddenOrHasHiddenAncestor)
-
-        try #require(findButton(in: content, labeled: "收起草稿")).performClick(nil)
+        content.layoutSubtreeIfNeeded()
+        let editorWindow = try #require(overlay.editor.window)
+        #expect(editorWindow.isVisible)
+        #expect(editorWindow.frame.minY == collapsed.maxY)
+        #expect(editorWindow.frame.width == collapsed.width)
         #expect(overlay.panel.frame == collapsed)
+        #expect(overlay.panel.windowNumber == barWindowNumber)
+        #expect(overlay.panel.convertToScreen(settings.convert(settings.bounds, to: nil)) == settingsFrame)
+        #expect(!overlay.editor.isHiddenOrHasHiddenAncestor)
+        #expect(findButton(in: content, labeled: "试用示例") == nil)
+        let editorContent = try #require(editorWindow.contentView)
+        #expect(findButton(in: editorContent, labeled: "试用示例") == nil)
+        #expect(!overlay.panel.hasShadow)
+        #expect(!editorWindow.hasShadow)
+        let barJoin = try pixel(in: content, x: 3, y: content.bounds.maxY - 3)
+        let draftJoin = try pixel(in: editorContent, x: 3, y: 2)
+        #expect(barJoin.alphaComponent > 0.99)
+        #expect(draftJoin.alphaComponent > 0.99)
+        let background = try pixel(in: content, x: 100, y: content.bounds.maxY - 5)
+        #expect(try pixel(in: content, x: 100, y: content.bounds.maxY - 1) == background)
+        #expect(try pixel(in: editorContent, x: 100, y: 0) == background)
+
+        let collapse = try #require(findButton(in: content, labeled: "收起草稿"))
+        #expect(collapse.title == "收起")
+        collapse.performClick(nil)
+        #expect(draft.title == "展开")
+        #expect(overlay.panel.frame == collapsed)
+        #expect(overlay.panel.windowNumber == barWindowNumber)
+        #expect(overlay.panel.isVisible)
+        #expect(overlay.panel.hasShadow)
+        #expect(!editorWindow.isVisible)
         #expect(overlay.editor.isHiddenOrHasHiddenAncestor)
     }
 
@@ -78,6 +132,7 @@ import Testing
         let bounds = try #require(overlay.panel.screen?.visibleFrame)
         overlay.panel.setFrameOrigin(NSPoint(x: bounds.minX + 4, y: bounds.minY + 22))
         let restingFrame = overlay.panel.frame
+        overlay.panel.orderFrontRegardless()
         let flow = VoxloomFlow(settings: .init(), capture: { FlowCapture() },
             recognizer: { _ in WaitingRecognizer(finalization: AsyncStream { $0.finish() }) }, corrector: { _ in nil },
             insertion: .init(foregroundTarget: { nil }, canPost: { false }, paste: { _, _ in false }))
@@ -91,12 +146,16 @@ import Testing
         content.layoutSubtreeIfNeeded()
         #expect(overlay.panel.frame.minX == restingFrame.minX)
         #expect(overlay.panel.frame.width == restingFrame.width)
-        let field = try #require(livePreview(in: content))
+        let textContent = try #require(overlay.editor.window?.contentView)
+        textContent.layoutSubtreeIfNeeded()
+        let field = try #require(livePreview(in: textContent))
         #expect(field.frame.width <= restingFrame.width)
 
-        try #require(findButton(in: content, labeled: "草稿")).performClick(nil)
+        try #require(findButton(in: content, labeled: "展开草稿")).performClick(nil)
         content.layoutSubtreeIfNeeded()
-        #expect(bounds.contains(overlay.panel.frame))
+        let editorWindow = try #require(overlay.editor.window)
+        #expect(bounds.contains(editorWindow.frame))
+        #expect(overlay.panel.frame == restingFrame)
         #expect(overlay.editor.string == longText)
         try #require(findButton(in: content, labeled: "收起草稿")).performClick(nil)
         content.layoutSubtreeIfNeeded()
@@ -108,20 +167,23 @@ import Testing
     @Test func enterSubmitsTheDraftAndShiftEnterKeepsEditing() throws {
         _ = NSApplication.shared
         let overlay = VoxloomOverlay()
+        overlay.show()
+        defer { overlay.panel.orderOut(nil) }
         let content = try #require(overlay.panel.contentView)
-        try #require(findButton(in: content, labeled: "草稿")).performClick(nil)
+        try #require(findButton(in: content, labeled: "展开草稿")).performClick(nil)
         let editor = overlay.editor
         editor.isEditable = true
         editor.string = "第一行"
         editor.setSelectedRange(NSRange(location: editor.string.utf16.count, length: 0))
-        overlay.panel.makeFirstResponder(editor)
+        let editorWindow = try #require(editor.window)
+        editorWindow.makeFirstResponder(editor)
         let submission = DraftSubmission()
         overlay.insert.target = submission
         overlay.insert.action = #selector(DraftSubmission.submit)
 
         func pressReturn(_ modifiers: NSEvent.ModifierFlags = [], key: Int = kVK_Return) throws {
             let event = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: modifiers,
-                timestamp: 0, windowNumber: overlay.panel.windowNumber, context: nil,
+                timestamp: 0, windowNumber: editorWindow.windowNumber, context: nil,
                 characters: "\r", charactersIgnoringModifiers: "\r", isARepeat: false, keyCode: UInt16(key)))
             editor.keyDown(with: event)
         }
@@ -153,22 +215,28 @@ import Testing
             recognizer: { _ in WaitingRecognizer(finalization: finalization.stream) },
             corrector: { _ in nil }, insertion: .init(foregroundTarget: { 101 }, canPost: { canPost }, paste: { _, _ in true }))
         let content = try #require(overlay.panel.contentView)
+        let textWindow = try #require(overlay.editor.window)
+        let textContent = try #require(textWindow.contentView)
+        overlay.show()
+        defer { overlay.panel.orderOut(nil) }
 
         flow.handle(.start)
         try await reaches { flow.state?.live.phase == .recording }
         overlay.render(flow, availability: .init(canInsert: canPost))
         #expect(overlay.status.stringValue.hasPrefix("正在录音"))
         #expect(findVisible(NSLevelIndicator.self, in: content) != nil)
-        #expect(livePreview(in: content) == nil)
+        #expect(findVisible(NSImageView.self, in: content) == nil)
+        #expect(livePreview(in: textContent) == nil)
         let emptyBar = overlay.panel.frame
         flow.edit("已经说出的第一句", basedOn: "")
         overlay.render(flow, availability: .init(canInsert: canPost))
-        #expect(livePreview(in: content)?.stringValue == "已经说出的第一句")
-        #expect(overlay.panel.frame.height > emptyBar.height)
-        #expect(overlay.panel.frame.minY == emptyBar.minY)
+        #expect(livePreview(in: textContent)?.stringValue == "已经说出的第一句")
+        #expect(textWindow.isVisible)
+        #expect(textWindow.frame.minY == emptyBar.maxY)
+        #expect(overlay.panel.frame == emptyBar)
         flow.edit("文字继续更新", basedOn: "已经说出的第一句")
         overlay.render(flow, availability: .init(canInsert: canPost))
-        #expect(livePreview(in: content)?.stringValue == "文字继续更新")
+        #expect(livePreview(in: textContent)?.stringValue == "文字继续更新")
         capture.receive?([3000, -3000])
         try await reaches { flow.state?.live.samples.count == 2 }
 
@@ -186,20 +254,26 @@ import Testing
         #expect(overlay.status.stringValue == InsertionError.permission.localizedDescription)
         #expect(findVisible(NSProgressIndicator.self, in: content) == nil)
         #expect(overlay.editor.isHiddenOrHasHiddenAncestor)
-        #expect(livePreview(in: content)?.stringValue == flow.state?.text)
-        try #require(findButton(in: content, labeled: "草稿")).performClick(nil)
-        #expect(livePreview(in: content) == nil)
+        #expect(livePreview(in: textContent)?.stringValue == flow.state?.text)
+        try #require(findButton(in: content, labeled: "展开草稿")).performClick(nil)
+        #expect(livePreview(in: textContent) == nil)
         try #require(findButton(in: content, labeled: "收起草稿")).performClick(nil)
-        #expect(livePreview(in: content)?.stringValue == flow.state?.text)
+        #expect(livePreview(in: textContent)?.stringValue == flow.state?.text)
         canPost = true
         flow.handle(.confirm)
         overlay.render(flow, availability: .init(canInsert: canPost))
-        #expect(livePreview(in: content) == nil)
+        #expect(livePreview(in: textContent) == nil)
+        #expect(!textWindow.isVisible)
         #expect(overlay.panel.frame == emptyBar)
+        let sentIcon = try #require(findVisible(NSImageView.self, in: content))
+        #expect(sentIcon.image != nil)
+        #expect(findVisible(VoiceWaveformView.self, in: content) == nil)
         flow.clearOrCancel()
         overlay.render(flow, availability: .init(canInsert: canPost))
-        #expect(livePreview(in: content) == nil)
+        #expect(livePreview(in: textContent) == nil)
         #expect(overlay.panel.frame == emptyBar)
+        #expect(sentIcon.isHiddenOrHasHiddenAncestor)
+        #expect(findVisible(VoiceWaveformView.self, in: content) != nil)
         await flow.shutdown()
     }
 
@@ -256,6 +330,13 @@ import Testing
         let end = ContinuousClock.now.advanced(by: .seconds(2))
         while !predicate() && ContinuousClock.now < end { await Task.yield() }
         try #require(predicate())
+    }
+
+    private func pixel(in view: NSView, x: CGFloat, y: CGFloat) throws -> NSColor {
+        let area = NSRect(x: x, y: y, width: 1, height: 1)
+        let bitmap = try #require(view.bitmapImageRepForCachingDisplay(in: area))
+        view.cacheDisplay(in: area, to: bitmap)
+        return try #require(bitmap.colorAt(x: 0, y: 0))
     }
 
     private func findVisible<View: NSView>(_ type: View.Type, in view: NSView,

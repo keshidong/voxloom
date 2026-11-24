@@ -21,7 +21,7 @@ def package_disk_image(configuration, output, voice_isolation):
             tempfile.TemporaryDirectory(dir=output.parent, prefix="dmg-output-") as image_directory:
         source = Path(source_directory)
         command = [
-            sys.executable, "scripts/make-demo.py", "--product", "voxloom",
+            sys.executable, "scripts/package-app.py",
             "--configuration", configuration, "--output", str(source / f"{app_name}.app"),
             "--external-models",
         ]

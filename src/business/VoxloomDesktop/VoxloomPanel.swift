@@ -4,18 +4,15 @@ import SpeechFoundation
 import SpeechInput
 
 @MainActor final class VoxloomPanel: NSPanel {
-    enum Layout { case controls, preview, editor }
+    static let width: CGFloat = 380
+    private let allowsKeyboardFocus: Bool
 
-    private static let barSize = NSSize(width: 380, height: 56)
-    private static let previewSize = NSSize(width: 380, height: 88)
-    private static let draftSize = NSSize(width: 480, height: 252)
-    private var placement: (anchor: NSPoint, frame: NSRect)?
-
-    init() {
-        super.init(contentRect: NSRect(origin: .zero, size: Self.barSize),
+    init(height: CGFloat = 56, allowsKeyboardFocus: Bool = false) {
+        self.allowsKeyboardFocus = allowsKeyboardFocus
+        super.init(contentRect: NSRect(x: 0, y: 0, width: Self.width, height: height),
                    styleMask: [.borderless, .nonactivatingPanel],
                    backing: .buffered, defer: false)
-        title = "Voxloom"
+        title = VoxloomIdentity.displayName()
         appearance = NSAppearance(named: .darkAqua)
         isOpaque = false
         backgroundColor = .clear
@@ -25,52 +22,60 @@ import SpeechInput
         becomesKeyOnlyIfNeeded = true
         hidesOnDeactivate = false
         isReleasedWhenClosed = false
-        isMovableByWindowBackground = true
-        if let visible = NSScreen.main?.visibleFrame {
-            setFrameOrigin(NSPoint(x: visible.midX - frame.width / 2, y: visible.minY + 22))
-        }
+        isMovableByWindowBackground = !allowsKeyboardFocus
+        if !allowsKeyboardFocus, let visible = NSScreen.main?.visibleFrame { place(in: visible) }
     }
 
-    func setLayout(_ layout: Layout) {
-        let size = switch layout {
-        case .controls: Self.barSize
-        case .preview: Self.previewSize
-        case .editor: Self.draftSize
+    func showOnActiveDisplay(in visibleFrame: NSRect? = nil) {
+        let pointer = NSEvent.mouseLocation
+        let display = NSScreen.screens.first { $0.frame.contains(pointer) } ?? screen ?? NSScreen.main
+        if let visible = visibleFrame ?? display?.visibleFrame, !visible.contains(frame) {
+            place(in: visible)
         }
-        let previous = frame
-        guard previous.size != size else { return }
-        let anchor = placement.flatMap { $0.frame == previous ? $0.anchor : nil }
-            ?? NSPoint(x: previous.midX, y: previous.minY)
-        var origin = NSPoint(x: anchor.x - size.width / 2, y: anchor.y)
-        if let bounds = screen?.visibleFrame {
-            origin.x = max(bounds.minX, min(origin.x, bounds.maxX - size.width))
-            origin.y = max(bounds.minY, min(origin.y, bounds.maxY - size.height))
-        }
-        setFrame(NSRect(origin: origin, size: size), display: true)
-        placement = (anchor, frame)
+        orderFrontRegardless()
     }
 
-    override var canBecomeKey: Bool { true }
+    private func place(in visible: NSRect) {
+        let inset = min(22, max(0, visible.height - frame.height))
+        setFrameOrigin(NSPoint(x: visible.midX - frame.width / 2, y: visible.minY + inset))
+    }
+
+    override var canBecomeKey: Bool { allowsKeyboardFocus }
     override var canBecomeMain: Bool { false }
 }
 
-@MainActor final class VoxloomOverlay: NSWindowController, NSTextViewDelegate {
+enum VoiceBarSetup {
+    case accessibility
+    case microphone(MicrophoneCapture.Authorization)
+    case requestingMicrophone
+    case model(ModelDownloadStatus)
+}
+
+@MainActor final class VoxloomOverlay: NSWindowController, NSTextViewDelegate, NSWindowDelegate {
+    private static let draftHeight: CGFloat = 156
+    private static let editorPanelHeight: CGFloat = draftHeight + 24
+    private static let previewPanelHeight: CGFloat = 38
     let panel = VoxloomPanel()
-    let sample = NSButton(title: "试用示例", target: nil, action: nil)
+    private let textPanel = VoxloomPanel(height: editorPanelHeight, allowsKeyboardFocus: true)
+    private let barSurface = VoiceBarSurface()
+    private let textSurface = VoiceBarSurface()
     let settings = NSButton(title: "设置", target: nil, action: nil)
     let enableAccessibility = NSButton(title: "启用辅助功能", target: nil, action: nil)
+    let deferAccessibility = NSButton(title: "稍后", target: nil, action: nil)
+    let enableMicrophone = NSButton(title: "授权麦克风", target: nil, action: nil)
+    let retryModelDownload = NSButton(title: "重试下载", target: nil, action: nil)
+    let downloadProgress = NSProgressIndicator()
     let insert = NSButton(title: "插入 ↵", target: nil, action: nil)
     let copy = NSButton(title: "复制", target: nil, action: nil)
     let clear = NSButton(title: "清空", target: nil, action: nil)
     var onEdit: ((String, String, NSRange?) -> Void)?
     let editor = PanelEditor()
     let status = NSTextField(wrappingLabelWithString: "")
-    private let draftToggle = DraftToggleButton(title: "草稿", target: nil, action: nil)
+    private let draftToggle = NSButton(title: "展开", target: nil, action: nil)
     private let draftBody = NSStackView()
     private let preview = LivePreviewLabel(labelWithString: "")
-    private let model = NSTextField(labelWithString: "")
-    private let shortcut = NSTextField(labelWithString: "松开 Fn 自动插入")
     private let waveform = VoiceWaveformView()
+    private let sentIcon = NSImageView()
     private let meter = NSLevelIndicator()
     private let progress = NSProgressIndicator()
     private let placeholder = NSTextField(labelWithString: "转写会出现在这里")
@@ -81,43 +86,39 @@ import SpeechInput
     init() {
         super.init(window: panel)
         build()
+        panel.delegate = self
+        textPanel.animationBehavior = .none
+        textPanel.hasShadow = false
     }
 
     required init?(coder: NSCoder) { nil }
 
     private func build() {
         let bar = makeBar()
+        panel.contentView = barSurface
+        add(bar, to: barSurface, height: 28)
+
         buildDraft()
         preview.font = .systemFont(ofSize: 15)
         preview.maximumNumberOfLines = 1
         preview.lineBreakMode = .byTruncatingHead
         preview.setAccessibilityLabel("实时草稿")
         preview.isHidden = true
-        let surface = NSView()
-        surface.wantsLayer = true
-        surface.layer?.backgroundColor = NSColor(srgbRed: 0.075, green: 0.13, blue: 0.14, alpha: 1).cgColor
-        surface.layer?.cornerRadius = 16
-        surface.layer?.borderWidth = 1
-        surface.layer?.borderColor = NSColor.white.withAlphaComponent(0.14).cgColor
-        surface.layer?.masksToBounds = true
-        panel.contentView = surface
-        for row in [draftBody, preview, bar] {
-            row.translatesAutoresizingMaskIntoConstraints = false
-            surface.addSubview(row)
-            NSLayoutConstraint.activate([
-                row.leadingAnchor.constraint(equalTo: surface.leadingAnchor, constant: 14),
-                row.trailingAnchor.constraint(equalTo: surface.trailingAnchor, constant: -14)
-            ])
-        }
-        NSLayoutConstraint.activate([
-            bar.heightAnchor.constraint(equalToConstant: 28),
-            bar.bottomAnchor.constraint(equalTo: surface.bottomAnchor, constant: -14),
-            preview.bottomAnchor.constraint(equalTo: bar.topAnchor, constant: -8),
-            preview.heightAnchor.constraint(equalToConstant: 22),
-            draftBody.bottomAnchor.constraint(equalTo: bar.topAnchor, constant: -12),
-            draftBody.heightAnchor.constraint(equalToConstant: 184)
-        ])
         draftBody.isHidden = true
+        textPanel.contentView = textSurface
+        add(draftBody, to: textSurface, height: Self.draftHeight)
+        add(preview, to: textSurface, height: 22)
+    }
+
+    private func add(_ row: NSView, to surface: NSView, height: CGFloat) {
+        row.translatesAutoresizingMaskIntoConstraints = false
+        surface.addSubview(row)
+        NSLayoutConstraint.activate([
+            row.leadingAnchor.constraint(equalTo: surface.leadingAnchor, constant: 14),
+            row.trailingAnchor.constraint(equalTo: surface.trailingAnchor, constant: -14),
+            row.centerYAnchor.constraint(equalTo: surface.centerYAnchor),
+            row.heightAnchor.constraint(equalToConstant: height)
+        ])
     }
 
     private func makeBar() -> NSStackView {
@@ -134,9 +135,22 @@ import SpeechInput
         draftToggle.bezelStyle = .rounded
         draftToggle.target = self
         draftToggle.action = #selector(toggleDraft)
-        draftToggle.setAccessibilityLabel("草稿")
+        draftToggle.setAccessibilityLabel("展开草稿")
         enableAccessibility.bezelStyle = .rounded
         enableAccessibility.contentTintColor = .systemMint
+        deferAccessibility.bezelStyle = .rounded
+        deferAccessibility.isHidden = true
+        enableMicrophone.bezelStyle = .rounded
+        enableMicrophone.contentTintColor = .systemMint
+        enableMicrophone.isHidden = true
+        retryModelDownload.bezelStyle = .rounded
+        retryModelDownload.isHidden = true
+        downloadProgress.style = .bar
+        downloadProgress.controlSize = .small
+        downloadProgress.maxValue = 100
+        downloadProgress.isHidden = true
+        downloadProgress.widthAnchor.constraint(equalToConstant: 64).isActive = true
+        downloadProgress.setAccessibilityLabel("ASR 模型下载进度")
         status.font = .systemFont(ofSize: 13, weight: .medium)
         status.maximumNumberOfLines = 1
         status.lineBreakMode = .byTruncatingTail
@@ -151,31 +165,36 @@ import SpeechInput
         progress.controlSize = .small
         progress.isHidden = true
         progress.setAccessibilityLabel("转写进度")
-        let bar = NSStackView(views: [waveform, status, meter, progress, NSView(),
-                                     enableAccessibility, draftToggle, settings, close])
+        sentIcon.image = VoxloomIdentity.brandWaveform()
+            ?? NSImage(systemSymbolName: "waveform", accessibilityDescription: nil)
+        sentIcon.contentTintColor = .systemMint
+        sentIcon.imageScaling = .scaleProportionallyUpOrDown
+        sentIcon.isHidden = true
+        NSLayoutConstraint.activate([
+            sentIcon.widthAnchor.constraint(equalToConstant: VoiceWaveformView.size.width),
+            sentIcon.heightAnchor.constraint(equalToConstant: VoiceWaveformView.size.height)
+        ])
+        let bar = NSStackView(views: [waveform, sentIcon, status, meter, progress, downloadProgress, NSView(),
+                                     enableMicrophone, retryModelDownload, enableAccessibility, deferAccessibility,
+                                     draftToggle, settings, close])
         bar.alignment = .centerY
         bar.spacing = 8
         return bar
     }
 
     private func buildDraft() {
-        for button in [sample, insert, copy, clear] {
+        for button in [insert, copy, clear] {
             button.bezelStyle = .rounded
         }
         insert.bezelColor = .systemMint
         insert.contentTintColor = .black
         insert.setAccessibilityLabel("插入")
         insert.toolTip = "Enter 插入到目标光标或替换所选文字，Shift+Enter 换行"
-        model.font = .systemFont(ofSize: 11, weight: .medium)
-        model.textColor = .secondaryLabelColor
-        shortcut.font = .systemFont(ofSize: 11, weight: .medium)
-        shortcut.textColor = .secondaryLabelColor
-        let footer = NSStackView(views: [sample, NSView(), clear, copy, insert])
-        let details = NSStackView(views: [model, NSView(), shortcut])
+        let footer = NSStackView(views: [NSView(), clear, copy, insert])
         draftBody.orientation = .vertical
         draftBody.alignment = .leading
         draftBody.spacing = 8
-        for row in [makePaper(), footer, details] {
+        for row in [makePaper(), footer] {
             draftBody.addArrangedSubview(row)
             row.widthAnchor.constraint(equalTo: draftBody.widthAnchor).isActive = true
         }
@@ -219,41 +238,76 @@ import SpeechInput
         return paper
     }
 
-    @objc private func hide() { panel.orderOut(nil) }
+    func show(in visibleFrame: NSRect? = nil) {
+        panel.showOnActiveDisplay(in: visibleFrame)
+        layoutTextPanel()
+    }
+
+    @objc private func hide() {
+        textPanel.orderOut(nil)
+        panel.orderOut(nil)
+    }
 
     @objc private func toggleDraft() {
         let show = draftBody.isHidden
         if !show { finishKeyboardEdit() }
         setDraftVisible(show)
-        if show, editor.isEditable { panel.makeFirstResponder(editor) }
+        if show, editor.isEditable { focusEditor() }
     }
 
     func showDraftEditor() {
+        if !panel.isVisible { show() }
         openedByShortcut = true
         setDraftVisible(true)
-        panel.makeFirstResponder(editor)
-        panel.makeKeyAndOrderFront(nil)
+        focusEditor()
+    }
+
+    private func focusEditor() {
+        textPanel.makeFirstResponder(editor)
+        textPanel.makeKey()
     }
 
     private func setDraftVisible(_ show: Bool) {
-        if !show { openedByShortcut = false }
-        draftBody.isHidden = !show
-        draftToggle.title = show ? "收起" : "草稿"
-        draftToggle.setAccessibilityLabel(show ? "收起草稿" : "草稿")
-        layoutPanel()
         if !show {
-            panel.makeFirstResponder(nil)
-            if panel.isKeyWindow {
-                panel.orderOut(nil)
-                panel.orderFrontRegardless()
-            }
+            openedByShortcut = false
+            textPanel.makeFirstResponder(nil)
+            if textPanel.isKeyWindow { textPanel.orderOut(nil) }
         }
+        draftBody.isHidden = !show
+        draftToggle.title = show ? "收起" : "展开"
+        draftToggle.setAccessibilityLabel(show ? "收起草稿" : "展开草稿")
+        layoutTextPanel()
     }
 
-    private func layoutPanel() {
+    func windowDidMove(_ notification: Notification) {
+        if textPanel.parent === panel { layoutTextPanel() }
+    }
+
+    private func layoutTextPanel() {
         let expanded = !draftBody.isHidden
         preview.isHidden = expanded || preview.stringValue.isEmpty
-        panel.setLayout(expanded ? .editor : (preview.isHidden ? .controls : .preview))
+        guard panel.isVisible, expanded || !preview.isHidden else {
+            if textPanel.isVisible { textPanel.orderOut(nil) }
+            barSurface.joinedEdge = nil
+            panel.hasShadow = true
+            return
+        }
+
+        let bar = panel.frame
+        let height = expanded ? Self.editorPanelHeight : Self.previewPanelHeight
+        let below = bar.minY - height
+        let opensBelow = panel.screen.map { screen in
+            let bounds = screen.visibleFrame
+            return bar.maxY + height > bounds.maxY && below >= bounds.minY
+        } ?? false
+        let originY = opensBelow ? below : bar.maxY
+        barSurface.joinedEdge = opensBelow ? .bottom : .top
+        textSurface.joinedEdge = opensBelow ? .top : .bottom
+        panel.hasShadow = false
+        let frame = NSRect(x: bar.minX, y: originY, width: bar.width, height: height)
+        if frame != textPanel.frame { textPanel.setFrame(frame, display: true, animate: false) }
+        if textPanel.parent == nil { panel.addChildWindow(textPanel, ordered: .above) }
+        if !textPanel.isVisible { textPanel.orderFrontRegardless() }
     }
 
     func textView(_ textView: NSTextView, shouldChangeTextIn affectedCharRange: NSRange, replacementString: String?) -> Bool {
@@ -275,7 +329,7 @@ import SpeechInput
         textDidChange(Notification(name: NSText.didChangeNotification))
     }
 
-    func render(_ flow: VoxloomFlow, availability: DictationAvailability) {
+    func render(_ flow: VoxloomFlow, availability: DictationAvailability, setup: VoiceBarSetup? = nil) {
         let current = flow.state
         let phase = current?.live.phase ?? .idle
         let text = current?.text ?? ""
@@ -283,7 +337,7 @@ import SpeechInput
         let previewText = flow.didSendInsertion ? "" : text.split(whereSeparator: \.isNewline).joined(separator: " ")
         if preview.stringValue != previewText { preview.stringValue = previewText }
         if openedByShortcut, flow.didSendInsertion { setDraftVisible(false) }
-        else { layoutPanel() }
+        else { layoutTextPanel() }
         if !editor.hasMarkedText(), presented != text {
             presented = text
             if editor.string != text {
@@ -294,24 +348,21 @@ import SpeechInput
         }
         editor.isEditable = current?.phase == .editing
         placeholder.isHidden = available
-        enableAccessibility.isHidden = availability.canInsert || phase != .idle
-        shortcut.stringValue = switch (openedByShortcut, availability.globalShortcut, availability.canInsert) {
-        case (true, _, _): "Enter 插入 · Shift+Enter 换行"
-        case (false, true, true): "松开 Fn 自动插入"
-        case (false, true, false): "启用辅助功能后自动插入"
-        case (false, false, _): "仅在 Voxloom 内响应 Fn"
-        }
-        model.stringValue = flow.settings.model.title
+        let introducingAccessibility = if case .accessibility? = setup { true } else { false }
+        enableAccessibility.isHidden = availability.canInsert || phase != .idle || (setup != nil && !introducingAccessibility)
+        deferAccessibility.isHidden = !introducingAccessibility
+        draftToggle.isHidden = introducingAccessibility && !available && draftBody.isHidden
+        let key = flow.settings.trigger.name
         let level = min(1, (current?.live.level ?? 0) * 5)
         meter.isHidden = phase != .recording
         meter.doubleValue = level
-        waveform.update(level: phase == .recording ? level : nil, isSample: flow.usesSample)
+        waveform.update(level: phase == .recording ? level : nil)
         let stateText = switch phase {
         case .authorizing: "等待麦克风授权"
-        case .recording: "\(flow.usesSample ? "正在读取示例" : "正在录音")  \(Int(current?.live.seconds ?? 0)) 秒"
+        case .recording: "正在录音  \(Int(current?.live.seconds ?? 0)) 秒"
         case .finishing: "正在整理最后一段"
         case .idle:
-            available ? "草稿已就绪" : (availability.globalShortcut && availability.canInsert ? "按住 Fn 说话，松开插入" : "按住 Fn 说话")
+            available ? "草稿已就绪" : (availability.globalShortcut && availability.canInsert ? "按住 \(key) 说话，松开插入" : "按住 \(key) 说话")
         }
         let correctionText: String?
         switch current?.correction {
@@ -323,15 +374,88 @@ import SpeechInput
         let processing = phase == .finishing || (phase == .idle && current?.correction == .working)
         progress.isHidden = !processing
         if processing { progress.startAnimation(nil) } else { progress.stopAnimation(nil) }
-        let editText = flow.editsRecordingOnRelease ? "松开 Fn 后编辑" : nil
-        status.stringValue = flow.notice ?? current?.live.error ?? editText ?? correctionText ?? stateText
+        let editText = flow.editsRecordingOnRelease ? "松开 \(key) 后编辑" : nil
+        status.stringValue = renderSetup(setup) ?? flow.notice ?? current?.live.error ?? editText ?? correctionText ?? stateText
+        let showsSentIcon = flow.didSendInsertion && status.stringValue == VoxloomFlow.insertionSentNotice
+        waveform.isHidden = showsSentIcon
+        sentIcon.isHidden = !showsSentIcon
         status.toolTip = status.stringValue
         status.textColor = phase == .recording ? .systemMint : .labelColor
-        sample.isEnabled = flow.canTrySample
         insert.isEnabled = flow.canInsert
         copy.isEnabled = available
         clear.title = flow.canStart ? "清空" : "取消"
         clear.isEnabled = available || !flow.canStart
+    }
+
+    private func renderSetup(_ setup: VoiceBarSetup?) -> String? {
+        enableMicrophone.isHidden = true
+        retryModelDownload.isHidden = true
+        downloadProgress.isHidden = true
+        downloadProgress.stopAnimation(nil)
+        switch setup {
+        case .accessibility: return "全局快捷键"
+        case .microphone(.notDetermined):
+            enableMicrophone.title = "授权麦克风"
+            enableMicrophone.isHidden = false
+            return "首次使用"
+        case .microphone(.denied):
+            enableMicrophone.title = "麦克风设置"
+            enableMicrophone.isHidden = false
+            return "麦克风权限未开启"
+        case .microphone(.restricted): return "麦克风受系统限制"
+        case .requestingMicrophone: return "等待麦克风授权"
+        case .model(.missing): return "等待下载转写模型"
+        case .model(.downloading(let fraction)):
+            downloadProgress.isHidden = false
+            downloadProgress.isIndeterminate = fraction == nil
+            if let fraction {
+                let percent = Int((fraction * 100).rounded())
+                downloadProgress.doubleValue = Double(percent)
+                return percent == 100 ? "正在校验转写模型" : "转写模型下载中 \(percent)%"
+            }
+            downloadProgress.startAnimation(nil)
+            return "正在下载转写模型"
+        case .model(.failed):
+            retryModelDownload.isHidden = false
+            return "转写模型下载失败"
+        case .microphone(.authorized), .model(.ready), nil: return nil
+        }
+    }
+}
+
+@MainActor private final class VoiceBarSurface: NSView {
+    enum Edge { case top, bottom }
+
+    var joinedEdge: Edge? {
+        didSet {
+            if joinedEdge != oldValue { needsDisplay = true }
+        }
+    }
+
+    init() {
+        super.init(frame: .zero)
+        wantsLayer = true
+        layerContentsRedrawPolicy = .duringViewResize
+        layer?.masksToBounds = true
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let radius: CGFloat = 16
+        var outline = bounds.insetBy(dx: 0.5, dy: 0.5)
+        // Draw the joining corners and border outside the window's visible bounds.
+        if let joinedEdge {
+            let extensionHeight = radius + 1
+            if joinedEdge == .bottom { outline.origin.y -= extensionHeight }
+            outline.size.height += extensionHeight
+        }
+        let path = NSBezierPath(roundedRect: outline, xRadius: radius, yRadius: radius)
+        NSColor(srgbRed: 0.075, green: 0.13, blue: 0.14, alpha: 1).setFill()
+        path.fill()
+        NSColor.white.withAlphaComponent(0.14).setStroke()
+        path.lineWidth = 1
+        path.stroke()
     }
 }
 
@@ -339,10 +463,6 @@ import SpeechInput
     override var intrinsicContentSize: NSSize {
         NSSize(width: NSView.noIntrinsicMetric, height: super.intrinsicContentSize.height)
     }
-}
-
-@MainActor private final class DraftToggleButton: NSButton {
-    override var needsPanelToBecomeKey: Bool { true }
 }
 
 @MainActor final class PanelEditor: NSTextView {

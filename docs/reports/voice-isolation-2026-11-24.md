@@ -64,7 +64,7 @@ Debug App 使用本机 VoxLock INT8。开关默认关闭。轻声、正常和大
 
 ```bash
 python3 scripts/prepare-voice-isolation.py
-python3 scripts/make-demo.py --product voxloom -c debug --voice-isolation \
+python3 scripts/package-app.py -c debug --voice-isolation \
   --bundle-id dev.voxloom.app.isolation.debug \
   --output '.build/voice-isolation-app/Voxloom Voice Isolation Debug.app'
 ```

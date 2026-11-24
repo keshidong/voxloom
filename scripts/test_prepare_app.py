@@ -5,17 +5,20 @@ import tempfile
 import unittest
 
 
-SCRIPT = Path(__file__).resolve().with_name("prepare-demo.sh")
+SCRIPT = Path(__file__).resolve().with_name("prepare-app.sh")
 
 
-class DemoPreparationTest(unittest.TestCase):
-    def test_prepare_only_stages_resources_without_building_a_demo_app(self):
+class AppPreparationTest(unittest.TestCase):
+    def test_default_prepares_and_builds_voxloom(self):
+        self.check_preparation(None, includes_weights=True, app_name="Voxloom.app")
+
+    def test_prepare_only_stages_resources_without_building_an_app(self):
         self.check_preparation("--prepare-only", includes_weights=True)
 
     def test_runtime_only_prepares_engines_without_downloading_model_weights(self):
         self.check_preparation("--runtime-only", includes_weights=False)
 
-    def check_preparation(self, mode, includes_weights):
+    def check_preparation(self, mode, includes_weights, app_name=None):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             scripts = root / "scripts"
@@ -40,20 +43,21 @@ class DemoPreparationTest(unittest.TestCase):
                                 touch .runtime/qwen-weights
                             fi
                             ;;
+                        scripts/package-app.py) mkdir 'Voxloom.app' ;;
                         scripts/make-demo.py) mkdir 'voxloom 0.3.2.app' ;;
                     esac
                 }
                 source "$0" "$@"
             """
-            subprocess.run(
-                ["/bin/bash", "-c", shell, str(scripts / SCRIPT.name), mode],
-                cwd=root, check=True, capture_output=True, text=True,
-            )
+            command = ["/bin/bash", "-c", shell, str(scripts / SCRIPT.name)]
+            if mode:
+                command.append(mode)
+            subprocess.run(command, cwd=root, check=True, capture_output=True, text=True)
 
             self.assertTrue((root / ".runtime/qwen-asr-runtime").is_dir())
             self.assertEqual((root / ".runtime/whisper-weights").exists(), includes_weights)
             self.assertEqual((root / ".runtime/qwen-weights").exists(), includes_weights)
-            self.assertEqual(list(root.glob("*.app")), [])
+            self.assertEqual([app.name for app in root.glob("*.app")], [app_name] if app_name else [])
 
 
 if __name__ == "__main__":

@@ -2,6 +2,22 @@ import AVFoundation
 import Foundation
 
 @MainActor public final class MicrophoneCapture: AudioCapturing {
+    public enum Authorization { case notDetermined, authorized, denied, restricted }
+
+    public static var authorization: Authorization {
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .notDetermined: .notDetermined
+        case .authorized: .authorized
+        case .denied: .denied
+        case .restricted: .restricted
+        @unknown default: .restricted
+        }
+    }
+
+    public static func requestAuthorization() async -> Bool {
+        await AVCaptureDevice.requestAccess(for: .audio)
+    }
+
     public private(set) var sourceDescription = "系统默认麦克风"
     private var engine: AVAudioEngine?
     private var configurationObserver: (any NSObjectProtocol)?
@@ -11,8 +27,8 @@ import Foundation
     private let makeInput: @MainActor () -> (AVAudioEngine, AVAudioNode)
     private let installTap: @MainActor (AVAudioNode, AVAudioFormat, @escaping AVAudioNodeTapBlock) -> Void
     public init() {
-        requestPermission = { await AVCaptureDevice.requestAccess(for: .audio) }
-        isAuthorized = { AVCaptureDevice.authorizationStatus(for: .audio) == .authorized }
+        requestPermission = Self.requestAuthorization
+        isAuthorized = { Self.authorization == .authorized }
         makeInput = { let engine = AVAudioEngine(); return (engine, engine.inputNode) }
         installTap = { node, format, callback in node.installTap(onBus: 0, bufferSize: 2048, format: format, block: callback) }
     }

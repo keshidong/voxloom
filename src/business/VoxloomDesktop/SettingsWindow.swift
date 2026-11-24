@@ -1,4 +1,5 @@
 import AppKit
+import Carbon
 import SpeechFoundation
 
 @MainActor final class SettingsWindow: NSWindowController, NSTextFieldDelegate, NSWindowDelegate {
@@ -11,6 +12,11 @@ import SpeechFoundation
     let conversationContext = NSButton(checkboxWithTitle: "用当前对话的近期消息辅助转写", target: nil, action: nil)
     let voiceIsolation = NSButton(checkboxWithTitle: "只保留我的声音（实验）", target: nil, action: nil)
     let enableAccessibility = NSButton(title: "启用辅助功能", target: nil, action: nil)
+    private let changeTrigger = NSButton(title: "更改…", target: nil, action: nil)
+    private let resetTrigger = NSButton(title: "恢复 Fn", target: nil, action: nil)
+    private let triggerLabel = NSTextField(labelWithString: "")
+    private var trigger: DictationTrigger = .fn
+    private var triggerMonitor: Any?
     private let permissionStatus = NSTextField(labelWithString: "")
     private let voiceStatus = NSTextField(labelWithString: "")
     private let recognitionDownload = ModelDownloadRow()
@@ -24,11 +30,12 @@ import SpeechFoundation
     var onRemoveVoice: ((VoiceSampleKind) -> Void)?
     var onClose: (() -> Void)?
     var onRetryModel: ((String) -> Void)?
+    var onTriggerCapture: ((Bool) -> Void)?
 
     init(settings: DictationSettings, hasModelDownloads: Bool = false) {
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 460, height: hasModelDownloads ? 756 : 660),
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 460, height: hasModelDownloads ? 790 : 690),
                               styleMask: [.titled, .closable], backing: .buffered, defer: false)
-        window.title = "Voxloom 设置"
+        window.title = "\(VoxloomIdentity.displayName()) 设置"
         window.isReleasedWhenClosed = false
         window.center()
         super.init(window: window)
@@ -41,9 +48,9 @@ import SpeechFoundation
 
     func updatePermissions(_ availability: DictationAvailability) {
         permissionStatus.stringValue = switch (availability.globalShortcut, availability.canInsert) {
-        case (true, true): "全局 Fn 和自动插入已启用"
-        case (false, true): "辅助功能已启用，全局 Fn 暂不可用"
-        case (_, false): "在系统设置的「辅助功能」中允许 Voxloom"
+        case (true, true): "全局快捷键和自动插入已启用"
+        case (false, true): "全局快捷键暂不可用"
+        case (_, false): "在系统设置的「辅助功能」中允许 \(VoxloomIdentity.displayName())"
         }
         enableAccessibility.isEnabled = !availability.canInsert
     }
@@ -79,6 +86,15 @@ import SpeechFoundation
         vocabulary.widthAnchor.constraint(greaterThanOrEqualToConstant: 236).isActive = true
         let permissionHeading = NSTextField(labelWithString: "快捷键与插入")
         permissionHeading.font = .systemFont(ofSize: 17, weight: .semibold)
+        changeTrigger.target = self
+        changeTrigger.action = #selector(beginTriggerCapture)
+        changeTrigger.setAccessibilityLabel("更改按住说话键")
+        resetTrigger.target = self
+        resetTrigger.action = #selector(useFunctionKey)
+        let keyboard = NSStackView(views: [NSTextField(labelWithString: "按住说话键"),
+                                           triggerLabel, changeTrigger, resetTrigger])
+        keyboard.alignment = .centerY
+        keyboard.spacing = 8
         permissionStatus.textColor = .secondaryLabelColor
         let permissions = NSStackView(views: [enableAccessibility, permissionStatus])
         permissions.alignment = .centerY
@@ -88,7 +104,7 @@ import SpeechFoundation
         let voiceSection = makeVoiceSection()
         let stack = NSStackView(views: [heading, hint, models, recognitionDownload, correctionDownload,
                                        gpu, inputContext, conversationContext,
-                                       separator, voiceSection, permissionHeading, permissions])
+                                       separator, voiceSection, permissionHeading, keyboard, permissions])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 12
@@ -164,12 +180,70 @@ import SpeechFoundation
         }
     }
 
-    func windowWillClose(_ notification: Notification) { onClose?() }
+    func windowWillClose(_ notification: Notification) {
+        stopTriggerCapture()
+        onClose?()
+    }
+
+    func windowDidResignKey(_ notification: Notification) { stopTriggerCapture() }
+
+    @objc private func beginTriggerCapture() {
+        if triggerMonitor != nil { stopTriggerCapture(); return }
+        changeTrigger.title = "取消"
+        triggerLabel.stringValue = "按下一个键"
+        resetTrigger.isEnabled = false
+        onTriggerCapture?(true)
+        triggerMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { [weak self] event in
+            let captured = MainActor.assumeIsolated { self?.captureTrigger(event) == true }
+            return captured ? nil : event
+        }
+        if triggerMonitor == nil {
+            onTriggerCapture?(false)
+            refreshTriggerControls()
+        }
+    }
+
+    private func captureTrigger(_ event: NSEvent) -> Bool {
+        guard window?.isKeyWindow == true else { return false }
+        if event.type == .keyDown, Int(event.keyCode) == kVK_Escape {
+            stopTriggerCapture()
+        } else if let captured = DictationTrigger(capturing: event) {
+            trigger = captured
+            stopTriggerCapture()
+            changed()
+        } else if event.type == .keyDown, !event.isARepeat {
+            triggerLabel.stringValue = "请按其他单键"
+        }
+        return true
+    }
+
+    func stopTriggerCapture() {
+        guard let triggerMonitor else { return }
+        NSEvent.removeMonitor(triggerMonitor)
+        self.triggerMonitor = nil
+        onTriggerCapture?(false)
+        refreshTriggerControls()
+    }
+
+    @objc private func useFunctionKey() {
+        trigger = .fn
+        refreshTriggerControls()
+        changed()
+    }
+
+    private func refreshTriggerControls() {
+        triggerLabel.stringValue = trigger.name
+        changeTrigger.title = "更改…"
+        triggerLabel.toolTip = trigger.modifier == nil ? "单独按 \(trigger.name) 时用于听写" : nil
+        resetTrigger.isEnabled = trigger != .fn
+    }
     @objc private func recordVoice(_ sender: NSButton) { onRecordVoice?(VoiceSampleKind.allCases[sender.tag]) }
     @objc private func playVoice(_ sender: NSButton) { onPlayVoice?(VoiceSampleKind.allCases[sender.tag]) }
     @objc private func removeVoice(_ sender: NSButton) { onRemoveVoice?(VoiceSampleKind.allCases[sender.tag]) }
 
     private func load(_ settings: DictationSettings) {
+        trigger = settings.trigger
+        refreshTriggerControls()
         recognition.selectItem(at: RecognitionModel.allCases.firstIndex(of: settings.model) ?? 0)
         correction.selectItem(at: settings.correctsText ? 0 : 1)
         language.selectItem(at: RecognitionLanguage.allCases.firstIndex(of: settings.language) ?? 0)
@@ -185,6 +259,7 @@ import SpeechFoundation
     @objc private func changed() {
         guard recognition.indexOfSelectedItem >= 0, language.indexOfSelectedItem >= 0 else { return }
         var selected = DictationSettings()
+        selected.trigger = trigger
         selected.model = RecognitionModel.allCases[recognition.indexOfSelectedItem]
         selected.language = RecognitionLanguage.allCases[language.indexOfSelectedItem]
         selected.correctsText = correction.indexOfSelectedItem == 0

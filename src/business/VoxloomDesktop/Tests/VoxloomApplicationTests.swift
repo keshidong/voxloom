@@ -7,7 +7,68 @@ import Testing
 @testable import VoxloomDesktop
 
 @MainActor @Suite(.serialized) struct VoxloomApplicationTests {
-    @Test func firstLaunchExposesTheDownloadAndBlocksRecordingUntilTheSelectedModelIsReady() async throws {
+    @Test func showingTheVoiceBarRestoresItAboveTheDock() throws {
+        _ = NSApplication.shared
+        let screen = try #require(NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? NSScreen.main)
+        let bounds = screen.visibleFrame
+        let app = VoxloomCoordinator(root: FileManager.default.temporaryDirectory, activate: {})
+        let panel = app.overlay.panel
+        defer { panel.orderOut(nil) }
+        panel.setFrameOrigin(NSPoint(x: bounds.midX - panel.frame.width / 2, y: bounds.minY - panel.frame.height))
+        try #require(!bounds.contains(panel.frame))
+
+        app.showOverlay()
+
+        #expect(bounds.contains(panel.frame))
+        #expect(panel.frame.minY > bounds.minY)
+        #expect(panel.isVisible)
+    }
+
+    private enum AccessibilityChoice { case enable, later }
+
+    @Test func firstLaunchGuidesAccessibilityBeforeMicrophoneAndDownloadProgress() async throws {
+        try await verifyFirstLaunch(.enable)
+    }
+
+    @Test func skippingAccessibilityStillAllowsMicrophoneAndDownloadProgress() async throws {
+        try await verifyFirstLaunch(.later)
+    }
+
+    @Test func anEarlierAcknowledgmentDoesNotBypassMissingAccessibilityOnLaunch() async throws {
+        _ = NSApplication.shared
+        let suite = UUID().uuidString
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(true, forKey: "onboarding.accessibilityAcknowledged")
+        let capture = FlowCapture()
+        let clock = HistoricalScheduler(initialClock: Date(timeIntervalSince1970: 0))
+        var keys: DictationKeyInput?
+        let app = VoxloomCoordinator(root: FileManager.default.temporaryDirectory, defaults: defaults,
+            recognizer: { _ in SampleRecognizer() }, capture: { capture }, activate: {},
+            permissions: .init(isTrusted: { false }, canPostEvents: { false }, microphoneAuthorization: { .authorized }),
+            makeMonitor: { input in
+                let simulated = DictationKeyInput(scheduler: clock, canConfirm: input.canConfirm, action: input.action)
+                keys = simulated
+                return DictationKeyMonitor(input: simulated, isTrusted: { false })
+            })
+        app.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
+        defer { app.overlay.panel.orderOut(nil) }
+        #expect(!app.overlay.enableAccessibility.isHiddenOrHasHiddenAncestor)
+        #expect(!app.overlay.deferAccessibility.isHiddenOrHasHiddenAncestor)
+        let key = try #require(keys)
+        key.changed(down: true, at: 0)
+        clock.advanceTo(clock.clock.addingTimeInterval(0.2))
+        #expect(app.flow.canStart)
+        #expect(capture.receive == nil)
+        key.changed(down: false, at: 0.3)
+        app.overlay.deferAccessibility.performClick(nil)
+        key.changed(down: true, at: 1)
+        clock.advanceTo(clock.clock.addingTimeInterval(0.2))
+        #expect(!app.flow.canStart)
+        await app.stop()
+    }
+
+    private func verifyFirstLaunch(_ choice: AccessibilityChoice) async throws {
         _ = NSApplication.shared
         let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
@@ -23,37 +84,86 @@ import Testing
         let defaults = try #require(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
         let gate = AsyncStream<Void>.makeStream()
+        let started = AsyncStream<Void>.makeStream()
+        var microphone = MicrophoneCapture.Authorization.notDetermined
+        var microphoneRequests = 0
+        var accessibilityGranted = false
+        var accessibilityRequests = 0
         let cache = directory.appending(path: "models")
         let downloads = try #require(LocalModels(root: directory, downloadDirectory: cache).downloads)
         let capture = FlowCapture()
         let engine = PrewarmTestRecognizer()
         let app = VoxloomCoordinator(root: directory, defaults: defaults, recognizer: { _ in engine },
-            capture: { capture }, activate: {}, permissions: .init(isTrusted: { false }, canPostEvents: { false }),
-            downloadDirectory: cache, downloadModel: { url, _ in
+            capture: { capture }, activate: {}, permissions: .init(isTrusted: { accessibilityGranted },
+                canPostEvents: { accessibilityGranted }, requestAccessibility: { accessibilityRequests += 1 },
+                microphoneAuthorization: { microphone }, requestMicrophone: {
+                    microphoneRequests += 1
+                    microphone = .authorized
+                    return true
+                }),
+            downloadDirectory: cache, downloadModel: { url, progress in
                 if url.lastPathComponent == "required" {
+                    progress(1, 2)
+                    started.continuation.yield(())
                     var permit = gate.stream.makeAsyncIterator()
                     _ = await permit.next()
                 }
                 let file = directory.appending(path: url.lastPathComponent)
                 try Data("ok".utf8).write(to: file)
                 return file
-            })
+            }, makeMonitor: { DictationKeyMonitor(input: $0, isTrusted: { false }) })
         app.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
         defer {
             gate.continuation.finish()
+            started.continuation.finish()
             app.settingsWindow.window?.orderOut(nil)
             app.overlay.panel.orderOut(nil)
         }
-        #expect(app.settingsWindow.window?.isVisible == true)
+        #expect(app.overlay.panel.isVisible)
+        #expect(app.settingsWindow.window?.isVisible == false)
+        var transfer = started.stream.makeAsyncIterator()
+        _ = await transfer.next()
+        #expect(microphoneRequests == 0)
+        #expect(!app.overlay.enableAccessibility.isHiddenOrHasHiddenAncestor)
+        #expect(app.overlay.enableMicrophone.isHiddenOrHasHiddenAncestor)
+        #expect(app.overlay.downloadProgress.isHiddenOrHasHiddenAncestor)
+        switch choice {
+        case .enable:
+            app.overlay.enableAccessibility.performClick(nil)
+            #expect(accessibilityRequests == 1)
+            #expect(app.overlay.enableMicrophone.isHiddenOrHasHiddenAncestor)
+            accessibilityGranted = true
+            app.applicationDidBecomeActive(Notification(name: NSApplication.didBecomeActiveNotification))
+        case .later:
+            let content = try #require(app.overlay.panel.contentView)
+            let later = try #require(findButton(labeled: "稍后", in: content))
+            later.performClick(nil)
+            #expect(accessibilityRequests == 0)
+            app.applicationDidBecomeActive(Notification(name: NSApplication.didBecomeActiveNotification))
+        }
+        #expect(!app.overlay.enableMicrophone.isHiddenOrHasHiddenAncestor)
+        #expect(app.overlay.downloadProgress.isHiddenOrHasHiddenAncestor)
         app.flow.handle(.start)
         #expect(capture.receive == nil)
         #expect(await engine.prepares == 0)
         #expect(app.flow.notice?.contains("转写模型尚未就绪") == true)
 
+        app.overlay.enableMicrophone.performClick(nil)
+        let progressDeadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while app.overlay.downloadProgress.doubleValue != 50 && ContinuousClock.now < progressDeadline {
+            await Task.yield()
+        }
+        #expect(microphoneRequests == 1)
+        #expect(app.overlay.enableMicrophone.isHiddenOrHasHiddenAncestor)
+        #expect(!app.overlay.downloadProgress.isHiddenOrHasHiddenAncestor)
+        #expect(app.overlay.downloadProgress.doubleValue == 50)
+        #expect(app.overlay.status.stringValue.contains("50%"))
+
         gate.continuation.yield(())
         let deadline = ContinuousClock.now.advanced(by: .seconds(3))
         while await engine.prepares == 0 && ContinuousClock.now < deadline { await Task.yield() }
         #expect(await engine.prepares == 1)
+        #expect(app.overlay.downloadProgress.isHiddenOrHasHiddenAncestor)
         app.flow.handle(.start)
         while capture.receive == nil && ContinuousClock.now < deadline { await Task.yield() }
         #expect(capture.receive != nil)
@@ -77,7 +187,7 @@ import Testing
         var factoryCalls = 0
         let app = VoxloomCoordinator(root: FileManager.default.temporaryDirectory, defaults: defaults,
             recognizer: { _ in factoryCalls += 1; return engine }, capture: { capture }, activate: {},
-            permissions: .init(isTrusted: { false }, canPostEvents: { false }))
+            permissions: .init(isTrusted: { false }, canPostEvents: { false }, microphoneAuthorization: { .authorized }))
         app.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
         defer { app.overlay.panel.orderOut(nil) }
         let deadline = ContinuousClock.now.advanced(by: .seconds(3))
@@ -260,7 +370,8 @@ import Testing
             recognizer: { _ in SampleRecognizer(text: "口述文字") }, capture: { capture },
             insertion: .init(foregroundTarget: { 101 }, canPost: { true },
                 paste: { text, _ in pasted.append(text); return true }, captureFocus: { _ in { true } }),
-            activate: {}, permissions: .init(isTrusted: { true }, canPostEvents: { true }), keyScheduler: clock,
+            activate: {}, permissions: .init(isTrusted: { true }, canPostEvents: { true },
+                microphoneAuthorization: { .authorized }), keyScheduler: clock,
             makeMonitor: { input in
                 DictationKeyMonitor(input: input, isTrusted: { true }, filterGlobal: { handler, _ in
                     tapped = handler
@@ -305,7 +416,7 @@ import Testing
             return
         }
         #expect(!app.overlay.editor.isHiddenOrHasHiddenAncestor)
-        #expect(app.overlay.panel.firstResponder === app.overlay.editor)
+        #expect(app.overlay.editor.window?.firstResponder === app.overlay.editor)
         #expect(app.overlay.editor.string == "口述文字")
 
         let editor = app.overlay.editor
@@ -342,7 +453,8 @@ import Testing
             paste: systemPaste.paste, captureFocus: { _ in { true } })
         let app = VoxloomCoordinator(root: FileManager.default.temporaryDirectory, defaults: defaults,
             recognizer: { _ in SampleRecognizer(text: transcript) }, capture: { capture }, insertion: insertion,
-            activate: {}, permissions: .init(isTrusted: { true }, canPostEvents: { true }), makeMonitor: { key in
+            activate: {}, permissions: .init(isTrusted: { true }, canPostEvents: { true },
+                microphoneAuthorization: { .authorized }), makeMonitor: { key in
                 let simulated = DictationKeyInput(scheduler: clock, canConfirm: key.canConfirm, action: key.action)
                 input = simulated
                 return DictationKeyMonitor(input: simulated, isTrusted: { false })
@@ -381,14 +493,15 @@ import Testing
         var postingAllowed = false
         var quit = false
         let permissions = DictationPermissions(isTrusted: { trusted }, canPostEvents: { postingAllowed },
-            requestAccessibility: { accessibilityRequests += 1 }, requestPostEvents: { postingRequests += 1 })
+            requestAccessibility: { accessibilityRequests += 1 }, requestPostEvents: { postingRequests += 1 },
+            microphoneAuthorization: { .authorized })
         let app = VoxloomCoordinator(root: FileManager.default.temporaryDirectory, defaults: defaults, activate: {},
             permissions: permissions,
             makeMonitor: { DictationKeyMonitor(input: $0, isTrusted: permissions.isTrusted, observeGlobal: { _ in {} }) },
             replyToQuit: { quit = $0 })
         app.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
         #expect(app.overlay.panel.isVisible)
-        #expect(app.overlay.status.stringValue == "按住 Fn 说话")
+        #expect(app.overlay.status.stringValue == "全局快捷键")
         #expect(app.overlay.editor.isHiddenOrHasHiddenAncestor)
         let overlayContent = try #require(app.overlay.panel.contentView)
         let enableAccessibility = try #require(findButton(labeled: "启用辅助功能", in: overlayContent))
@@ -441,42 +554,50 @@ import Testing
     }
 }
 
-@MainActor struct VoxloomSampleApplicationTests {
-    @Test func sampleUsesTheEditableOverlayAndCanBeCopiedOrCleared() async throws {
+@MainActor struct VoxloomDraftApplicationTests {
+    @Test func aRecordingCanBeEditedCopiedAndClearedInTheOverlay() async throws {
         _ = NSApplication.shared
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
         defer { try? FileManager.default.removeItem(at: root) }
-        try WAVCodec.encode(AudioClip(samples: [3000, -3000])).write(to: root.appendingPathComponent("chinese.wav"))
         let domain = UUID().uuidString
         let defaults = try #require(UserDefaults(suiteName: domain))
         defer { defaults.removePersistentDomain(forName: domain) }
-        var initial = DictationSettings()
-        initial.correctsText = false
-        initial.save(to: defaults)
         let board = NSPasteboard.withUniqueName()
         defer { board.releaseGlobally() }
 
+        let capture = FlowCapture()
         let app = VoxloomCoordinator(root: root, defaults: defaults, pasteboard: board,
-                                     recognizer: { _ in SampleRecognizer() }, activate: {}, permissions: .init(isTrusted: { false }))
+                                     recognizer: { _ in SampleRecognizer() }, capture: { capture }, activate: {},
+                                     permissions: .init(isTrusted: { false }, microphoneAuthorization: { .authorized }))
         app.connectViews()
         app.applicationDidBecomeActive(Notification(name: NSApplication.didBecomeActiveNotification))
         app.applicationDidResignActive(Notification(name: NSApplication.didResignActiveNotification))
         #expect(app.applicationShouldHandleReopen(NSApp, hasVisibleWindows: false))
         let rootView = try #require(app.overlay.panel.contentView)
-        try #require(findButton(labeled: "草稿", in: rootView)).performClick(nil)
-        try await runSampleAndWaitForDraft(in: app)
-        #expect(app.flow.usesSample)
+        try #require(findButton(labeled: "稍后", in: rootView)).performClick(nil)
+        try #require(findButton(labeled: "展开草稿", in: rootView)).performClick(nil)
+        app.flow.handle(.start)
+        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while capture.receive == nil && ContinuousClock.now < deadline { await Task.yield() }
+        let receive = try #require(capture.receive)
+        receive([3000, -3000])
+        while app.flow.state?.live.samples.count != 2 && ContinuousClock.now < deadline { await Task.yield() }
+        try #require(app.flow.state?.live.samples.count == 2)
+        app.flow.handle(.interrupted)
+        while !app.flow.canInsert && ContinuousClock.now < deadline { await Task.yield() }
+        try #require(app.flow.canInsert)
         #expect(app.overlay.editor.string == "示例草稿")
         #expect(app.overlay.editor.isEditable)
         try #require(findButton(labeled: "收起草稿", in: rootView)).performClick(nil)
         #expect(app.overlay.status.stringValue == "草稿已就绪")
         #expect(app.overlay.editor.isHiddenOrHasHiddenAncestor)
-        try #require(findButton(labeled: "草稿", in: rootView)).performClick(nil)
+        try #require(findButton(labeled: "展开草稿", in: rootView)).performClick(nil)
         #expect(app.overlay.editor.string == "示例草稿")
-        #expect(app.overlay.panel.firstResponder === app.overlay.editor)
+        let editorWindow = try #require(app.overlay.editor.window)
+        #expect(editorWindow.firstResponder === app.overlay.editor)
         let enter = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
-            timestamp: 0, windowNumber: app.overlay.panel.windowNumber, context: nil,
+            timestamp: 0, windowNumber: editorWindow.windowNumber, context: nil,
             characters: "\r", charactersIgnoringModifiers: "\r", isARepeat: false, keyCode: UInt16(kVK_Return)))
         app.overlay.editor.keyDown(with: enter)
         #expect(app.overlay.status.stringValue == "请为 Voxloom 启用辅助功能，草稿已保留。")
@@ -485,46 +606,21 @@ import Testing
         app.overlay.textDidChange(Notification(name: NSText.didChangeNotification))
         #expect(app.flow.state?.text == "编辑后的草稿")
         #expect(app.flow.canStart)
-        #expect(!app.overlay.sample.isEnabled)
         app.overlay.copy.performClick(nil)
         #expect(board.string(forType: .string) == "编辑后的草稿")
         app.overlay.clear.performClick(nil)
         #expect(app.overlay.editor.string.isEmpty)
-        try FileManager.default.removeItem(at: root.appendingPathComponent("chinese.wav"))
-        app.overlay.sample.performClick(nil)
-        #expect(app.overlay.status.stringValue == "示例音频不可用")
         let hide = try #require(findButton(labeled: "隐藏悬浮窗口", in: rootView))
         hide.performClick(nil)
         #expect(!app.overlay.panel.isVisible)
+        #expect(!editorWindow.isVisible)
         #expect(app.applicationShouldHandleReopen(NSApp, hasVisibleWindows: false))
         #expect(app.overlay.panel.isVisible)
+        #expect(editorWindow.isVisible)
         await app.stop()
         app.overlay.panel.orderOut(nil)
     }
 
-    private func runSampleAndWaitForDraft(in app: VoxloomCoordinator) async throws {
-        let ready = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
-        let render = app.flow.onChange
-        app.flow.onChange = { [weak app] in
-            render?()
-            guard app?.overlay.copy.isEnabled == true else { return }
-            ready.continuation.yield(())
-            ready.continuation.finish()
-        }
-        let watchdog = Task {
-            try await SuspendingClock().sleep(for: .seconds(2))
-            ready.continuation.finish()
-        }
-        defer {
-            app.flow.onChange = render
-            watchdog.cancel()
-            ready.continuation.finish()
-        }
-        app.overlay.sample.performClick(nil)
-        var update = ready.stream.makeAsyncIterator()
-        let drafted = await update.next()
-        try #require(drafted != nil, "The sample draft must appear before the deadline")
-    }
 }
 
 @MainActor private func findButton(labeled label: String, in view: NSView) -> NSButton? {

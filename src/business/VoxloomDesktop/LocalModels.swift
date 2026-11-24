@@ -44,10 +44,6 @@ struct LocalModels {
             useGPU: settings.usesGPU, mode: .interactive))
     }
 
-    func sample(for settings: DictationSettings) throws -> AudioClip {
-        try WAVCodec.decode(Data(contentsOf: file(settings.language == .english ? "english.wav" : "chinese.wav")))
-    }
-
     func voiceIsolator() -> VoiceIsolator? {
         let executable = file("voice-isolation-runtime/voice-isolation")
         guard FileManager.default.isExecutableFile(atPath: executable.path) else { return nil }

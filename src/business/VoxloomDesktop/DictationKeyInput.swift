@@ -50,12 +50,11 @@ import RxSwift
     }
 }
 
-/// Routes Fn transitions and filters recording shortcuts before delivery to the focused app.
+/// Routes the selected push-to-talk key and filters recording shortcuts.
 @MainActor final class DictationKeyMonitor {
     typealias RemoveMonitor = @MainActor () -> Void
     typealias ObserveGlobal = @MainActor (@escaping (NSEvent) -> Void) -> RemoveMonitor?
     typealias FilterGlobal = @MainActor (@escaping (NSEvent) -> Bool, @escaping () -> Void) -> RemoveMonitor?
-    private static let otherModifiers: NSEvent.ModifierFlags = [.shift, .control, .command, .option]
     private static let keyboardEvents: NSEvent.EventTypeMask = [.flagsChanged, .keyDown]
     private let input: DictationKeyInput
     private let isTrusted: () -> Bool
@@ -64,6 +63,9 @@ import RxSwift
     private var removeLocal: RemoveMonitor?
     private var global: (id: UUID, filtersEvents: Bool, remove: RemoveMonitor)?
     private var consumedKeys: Set<UInt16> = []
+    private var trigger: DictationTrigger = .fn
+    private var selectingTrigger = false
+    private var heldKey: UInt16?
     var isGlobal: Bool { global != nil }
 
     init(input: DictationKeyInput, isTrusted: @escaping () -> Bool,
@@ -100,6 +102,19 @@ import RxSwift
         refresh()
     }
 
+    func setTrigger(_ value: DictationTrigger) {
+        guard trigger != value else { return }
+        trigger = value
+        cancelHold()
+        if trigger.modifier == nil, global?.filtersEvents == false { removeGlobal() }
+        refresh()
+    }
+
+    func setSelectingTrigger(_ selecting: Bool) {
+        selectingTrigger = selecting
+        if selecting { cancelHold() }
+    }
+
     func refresh() {
         guard removeLocal != nil else { return }
         guard isTrusted() else {
@@ -114,13 +129,13 @@ import RxSwift
         }, { [weak self] in
             guard let self, global?.id == id else { return }
             consumedKeys.removeAll()
-            input.interrupt()
+            cancelHold()
         }) {
             removeGlobal()
             global = (id, true, remove)
             return
         }
-        guard global == nil else { return }
+        guard global == nil, trigger.modifier != nil else { return }
         // AppKit sends global observers only events addressed to other apps.
         let remove = observeGlobal { [weak self] event in
             MainActor.assumeIsolated {
@@ -135,19 +150,30 @@ import RxSwift
         removeLocal = nil
         removeGlobal()
         consumedKeys.removeAll()
-        input.interrupt()
+        cancelHold()
     }
 
     private func filter(_ event: NSEvent) -> Bool {
         switch event.type {
         case .keyUp:
+            if heldKey == event.keyCode {
+                heldKey = nil
+                input.changed(down: false, at: event.timestamp)
+            }
             return consumedKeys.remove(event.keyCode) != nil
         case .keyDown:
+            guard !selectingTrigger else { return false }
             if event.isARepeat {
                 if consumedKeys.contains(event.keyCode) { return true }
             } else {
                 consumedKeys.remove(event.keyCode)
-                if event.modifierFlags.isDisjoint(with: Self.otherModifiers),
+                if trigger.modifier == nil, event.keyCode == trigger.keyCode, trigger.permits(event.modifierFlags) {
+                    heldKey = event.keyCode
+                    consumedKeys.insert(event.keyCode)
+                    input.changed(down: true, at: event.timestamp)
+                    return true
+                }
+                if trigger.permits(event.modifierFlags),
                    let shortcut = recordingShortcut(for: event.keyCode), input.handle(shortcut) {
                     consumedKeys.insert(event.keyCode)
                     return true
@@ -168,20 +194,25 @@ import RxSwift
     }
 
     func receive(_ event: NSEvent) {
+        guard !selectingTrigger else { return }
         switch event.type {
         case .flagsChanged:
-            flagsChanged(keyCode: Int(event.keyCode), flags: event.modifierFlags, at: event.timestamp)
+            guard event.keyCode == trigger.keyCode, let modifier = trigger.modifier else {
+                cancelHold()
+                return
+            }
+            let down = modifier.isPressed(event.modifierFlags)
+            guard !down || trigger.permits(event.modifierFlags) else { cancelHold(); return }
+            input.changed(down: down, at: event.timestamp)
         case .keyDown:
-            input.interrupt()
+            cancelHold()
         default: break
         }
     }
 
-    private func flagsChanged(keyCode: Int, flags: NSEvent.ModifierFlags, at timestamp: TimeInterval) {
-        guard keyCode == kVK_Function else { input.interrupt(); return }
-        let down = flags.contains(.function)
-        guard !down || flags.intersection(Self.otherModifiers).isEmpty else { input.interrupt(); return }
-        input.changed(down: down, at: timestamp)
+    private func cancelHold() {
+        heldKey = nil
+        input.interrupt()
     }
 
     private func removeGlobal() {
@@ -189,7 +220,7 @@ import RxSwift
         self.global = nil
         global.remove()
         consumedKeys.removeAll()
-        input.interrupt()
+        cancelHold()
     }
 
     private static func installGlobalObserver(_ handler: @escaping (NSEvent) -> Void) -> RemoveMonitor? {

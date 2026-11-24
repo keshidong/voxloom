@@ -1,27 +1,29 @@
-# voxloom
+# 小声哔哔（Voxloom）
 
 简体中文 · [English](README.en.md)
 
-voxloom 是一个本地运行的中英文语音输入项目。语音识别、上下文纠错与设备交互通过独立接口组合。
+小声哔哔是一款在 macOS 本机运行的中英文语音输入 App。中文系统显示「小声哔哔」，其他语言显示 Voxloom。
 
-## Voxloom 桌面 App
+## 使用
 
-运行 `python3 scripts/make-demo.py --product voxloom` 可生成 `Voxloom.app`。App 有独立的程序入口和设置，直接使用项目的录音、转写和草稿模块。深绿波形的可编辑源稿随源码保留。[App 图标源稿](src/business/VoxloomDesktop/App/Resources/AppIcon.svg)
+资源准备完成后，运行 `python3 scripts/package-app.py --external-models` 可生成 `Voxloom.app`。菜单栏使用透明底的波形，颜色随系统调整，深色菜单栏里显示白色。[App 图标源稿](src/business/VoxloomDesktop/App/Resources/AppIcon.svg)
 
-打包参数 `--configuration`（`-c`）接受 `debug` 和 `release`，默认是 `release`。Debug 版使用独立应用名与 Bundle ID。Debug 的菜单栏波形图标下有「ASR 上下文日志」，显示最近一轮实际读取的草稿、近期消息片段、ASR 提示词和 UTF-8 字节数。「近期消息读取」显示读取成功或停止原因。日志保存在进程内存里，关闭 App 或点击「清空」后删除。
+打包参数 `--configuration`（`-c`）接受 `debug` 和 `release`，默认是 `release`。Debug 版使用独立应用名与 Bundle ID。Debug 版的菜单栏里有「ASR 上下文日志」，显示最近一轮实际读取的草稿、近期消息片段、ASR 提示词和 UTF-8 字节数。「近期消息读取」显示读取成功或停止原因。日志保存在进程内存里，关闭 App 或点击「清空」后删除。
 
 - 先把光标放到目标输入框，再单独按住 Fn（地球键）约 0.18 秒开始录音。松开后补齐尚未转写的音频。启用纠错时，最多再等 3 秒，超时时使用已有草稿。目标仍符合录音开始时的焦点时，Voxloom 自动发送粘贴请求。目标变化、录音中断或授权不足时，结果保留在草稿中。每轮录音最长 60 秒。
 - 录音中保持 Fn 按住，再按 E，松开 Fn 后打开草稿编辑器。转写完成后按 Enter 插入到录音开始时的输入框，Shift+Enter 换行。原输入框无法确认时，文字保留在草稿里。保持 Fn 按住再按 Esc 会取消本轮并恢复之前的草稿，松开 Fn 后可重新录音。
 - 累计录到约 1 秒且检测到声音时，立即提交首段转写。启动 Voxloom 时，若选用 Qwen3-ASR，App 会在后台加载模型。启用声纹过滤时也会提前加载分离模型。预热无需录音，听写复用已经准备的进程。使用其他识别引擎开始下一轮或退出 Voxloom 时会释放 Qwen 进程。
-- 底部语音条显示录音时长、音量、进度和最新一行转写，完整内容可在草稿里查看。齿轮打开设置，菜单栏波形图标可重新显示语音条。有未插入的草稿时，再按住 Fn 会另起一行追加，随后可以一起手动插入。取消续录会恢复本轮开始前的草稿。发出插入请求后，下一轮从空白草稿开始。
-- 点语音条的「草稿」展开完整编辑区，可编辑、复制、清空或试用内置示例。在草稿编辑区按 Enter 插入，按 Shift+Enter 换行。目标 App 聚焦时也可以双击 Fn。目标文本有选区时会使用该 App 的标准粘贴行为替换选区。前台 App 在插入前切换时，草稿可再次插入或复制。
-- 设置可选择 Qwen3-ASR 或 Whisper、选择语言和填写词汇。Qwen 纠错默认关闭，可在「纠错模型」中开启。已保存的开关设置会继续生效。[全量准确率评测](docs/reports/transcription-evaluation-2026-11-23.md)
+- 底部语音条显示录音时长、音量、进度和最新一行转写，完整内容可在草稿里查看。齿轮打开设置，点击菜单栏的 App 图标可重新显示语音条。有未插入的草稿时，再按住 Fn 会另起一行追加，随后可以一起手动插入。取消续录会恢复本轮开始前的草稿。发出插入请求后，下一轮从空白草稿开始。
+- 点语音条的「展开」可在原语音条上方编辑、复制或清空草稿。在草稿编辑区按 Enter 插入，按 Shift+Enter 换行。目标 App 聚焦时也可以双击 Fn。目标文本有选区时会使用该 App 的标准粘贴行为替换选区。前台 App 在插入前切换时，草稿可再次插入或复制。
+- 转录语言默认是中文，可在设置中改为自动或英文。设置也支持选择 Qwen3-ASR 或 Whisper、填写词汇，以及开启默认关闭的 Qwen 纠错。已保存的选项会继续生效。[全量准确率评测](docs/reports/transcription-evaluation-2026-11-23.md)
 - 包含声纹分离模型的构建可在设置里开启「只保留我的声音（实验）」，默认关闭。轻声、正常、大声各可录一段 3–8 秒的本人声音，可跟读设置里的中英短句。每段样本可以单独试听、重录或删除。至少录一段即可使用。按住 Fn 时，本地分离新增音频并更新转写预览。松开后用完整录音重新分离并转写，生成可提交的定稿。
 - 默认在按住 Fn 时读取前台可编辑输入框光标附近的片段，最多 240 个 UTF-16 单位。ASR 用其中的词语做识别提示，手动开启纠错后也会用它作为参考。上下文在本机处理，不另存到历史或设置。密码框、只读输入框和读取失败的输入框会直接使用普通听写。输入框上下文可在设置中关闭，新设置从下一次录音生效。
 - 对 macOS 自带终端，Voxloom 通过辅助功能只读扫描获得焦点的终端文本区，最多 4,096 个 UTF-16 单位。可见范围可用时，扫描限于该范围。能定位光标时，取输入行上下各最多 3 个有文字的行。取不到光标位置时，从范围末尾取最多 6 个有文字的行。去掉填充空格后，上下文最多保留 240 个 UTF-16 单位。
 - 可单独开启「用当前对话的近期消息辅助转写」。按住 Fn 时，Voxloom 从当前输入框所在的会话读取辅助功能明确标记为消息记录的区域，最多取最近 6 个文字片段。Voxloom 在本机提取和去重词语，优先使用手填词汇和近期技术词。ASR 提示总长上限为 Qwen 512 UTF-8 字节、Whisper 192 UTF-8 字节。找不到消息区域、切换会话或读取超时时，使用其余可用提示。这个选项默认关闭。
 - 启用纠错后，语音转写或键盘编辑停顿 800 毫秒时触发纠错，持续输入满 3 秒就提交最新一稿。引擎忙时只保留最新一稿，当前任务完成后再运行。模型结果按提交时的字符位置合入当前稿，跳过用户重输或新转写覆盖的位置。下一轮使用合并后的现稿。Voxloom 桌面听写使用单轮局部修改，通用 `QwenTextCorrector` 默认保留复核，可通过 `QwenConfiguration.mode` 选择 `.interactive`。
-- 在悬浮窗或设置中点「启用辅助功能」，在 macOS「隐私与安全性 → 辅助功能」中允许 Voxloom 使用全局 Fn 和自动插入。目标 App 无需逐个授权。麦克风权限在首次录音时申请。「试用示例」使用随附的录音。
+- 启动时如果还未开启辅助功能，语音条会先引导授权，用于全局快捷键和自动插入。启用或点「稍后」后，再引导授权麦克风。「稍后」仅对本次启动生效。ASR 模型从启动时就在后台下载，麦克风授权成功后，语音条显示下载进度。模型就绪后即可听写。
+- 默认按住 Fn 说话。外接键盘的 Fn 无响应时，打开「设置 → 按住说话键 → 更改」并按下想用的单个键，例如右 Option。选中的普通键在单独按下时用于听写。
+- 在悬浮窗或设置中点「启用辅助功能」，在 macOS「隐私与安全性 → 辅助功能」中允许 Voxloom 使用全局快捷键和自动插入。目标 App 无需逐个授权。
 
 本地检查包含语音条展开和收起、录音与转写反馈、Fn 按住和松开、辅助功能授权状态刷新，以及原生文本控件中的光标插入、选区替换和剪贴板恢复。真机全局快捷键和跨 App 插入需在授权后验收。
 
@@ -40,22 +42,6 @@ voxloom 是一个本地运行的中英文语音输入项目。语音识别、上
 内存使用 macOS 的 `ri_phys_footprint`。进程树汇总可能重复计入共享页，计入测试进程后，推理整棵进程树的峰值约为 2.35 GiB。CPU 的 100% 对应一个逻辑核。GPU 列是驱动报告的整机 `Device Utilization %`，同时运行的程序都会影响数值。本次采样无法给出 Voxloom 独占的 GPU 使用率。
 
 本次结果对应短样本，长时间听写和 16 GiB 设备的资源表现待测。本机采样记录位于 `.build/reports/desktop-resources.json`。
-
-## macOS Demo
-
-保留的 Demo 构建产物为 `voxloom 0.3.2.app`。GitHub 仓库提交源码、测试、文档与复现脚本，模型权重、运行环境和两个 App 构建产物在本机准备。
-
-默认链路为 **Qwen3-ASR-1.7B 4-bit → Qwen3-4B-Instruct-2507 Q4_K_M 纠错**。中文与英文均在本机处理，原始转写和可编辑草稿分别显示、分别复制。窗口前台时单按 Fn 开始录音，草稿未确认时双按 Fn 停止录音并确认。键盘修改可以与转写和纠错同时进行。
-
-语音转写或键盘编辑停顿 0.8 秒或持续变化 3 秒时请求纠错，数字变化提示核对。确认时补齐末段转写并冻结草稿。可关闭纠错，也可切换 Whisper base / tiny / Turbo。交互边界与快捷键见 [桌面草稿说明](docs/demo.md#当前源码的草稿输入)。
-
-本地纠错同时参考原文和带声调的普通话拼音。提示词包含 r/l、t/d、平翘舌和前后鼻音等常见混淆，结合句意和词汇决定是否修改。拼音来自转写和词汇提示，实际发音仍需结合音频评估。
-
-0.3.2 修复纠错引擎提前结束导致的 `invalidResult`，以经过原文匹配校验的局部修改生成候选，有修改时最多再复核一次，补查同一段里的重复指代错误。接口保持不变；详见[纠错修复说明](docs/correction-0.3.2.md)。
-
-这是最长 60 秒录音的周期性重新识别，尚未接入 Qwen 原生流式解码、Watch 或系统输入法上屏。首次加载模型需要等待；模型准确率、AirPods 轻声及中英混说仍需录音集评估。双模型已运行，但 16GB 设备上整个进程树峰值 ≤8GB 的完整验收尚未完成。
-
-[Demo 用法与验证](docs/demo.md) · [测试与实际覆盖率](docs/testing.md) · [开发规范](AGENTS.md)
 
 ## 可替换接口
 
@@ -87,15 +73,13 @@ await recognizer.shutdown()
 源码构建要求 Apple Silicon、macOS 14+、Swift 6 工具链与 Python 3。已在 M5 Pro / 48GiB / macOS 26.6.2 / Swift 6.3.2 验证；Intel 和 16GB 设备未验收。Python 3.12.16、MLX Audio 0.6.7 及依赖随 App 打包，用户运行不依赖系统 Python。
 
 ```bash
-bash scripts/prepare-demo.sh             # 开发者安装固定资源并构建；此步骤联网
-python3 scripts/make-demo.py             # 资源齐全时重打包 0.3.2
-python3 scripts/make-demo.py --product voxloom  # 打包独立桌面 App
-python3 scripts/prepare-voice-isolation.py     # 准备可选的离线声纹分离模型
-python3 scripts/make-demo.py --product voxloom -c debug --voice-isolation
+bash scripts/prepare-app.sh --prepare-only  # 下载本地开发和评测所需资源
+python3 scripts/prepare-voice-isolation.py --runtime-only
+python3 scripts/package-app.py --external-models --voice-isolation
+python3 scripts/package-app.py -c debug --external-models --voice-isolation
 python3 scripts/check.py                 # Swift 单元、模块、界面集成与覆盖率门槛
 python3 scripts/check-python.py          # Python 桥接协议测试与覆盖率
 python3 scripts/smoke-qwen.py            # 真实双模型 E2E 与短录音资源采样
-python3 scripts/smoke-qwen.py --app 'voxloom 0.3.2.app'  # 用打包资源重跑
 python3 scripts/smoke-whisper.py         # 保留的 Whisper API / CLI E2E
 ```
 
@@ -103,18 +87,20 @@ Qwen 开发资源由 `scripts/prepare-qwen.py` 安装，固定模型 revision、
 
 当前验证摘要保存在 [docs/reports/0.3.2](docs/reports/0.3.2/README.md)，完整本地报告在 `.build/reports/`，真实模型 E2E 不计入单元/模块覆盖率。历史首个 Whisper 切片记录保留在 [acceptance-01.md](docs/acceptance-01.md)。资源与模型来源见 [第三方说明](docs/third-party.md)。
 
+[测试与实际覆盖率](docs/testing.md) · [开发规范](AGENTS.md)
+
 ### 打包 macOS DMG
 
 推送 `v*` 版本标签时，GitHub Actions 自动构建 Apple Silicon 的 Release DMG 并上传到对应的 **Releases** 页面。也可以在 **Actions → Package Voxloom DMG → Run workflow** 手动打 Release 或 Debug 包，构建产物在 **Artifacts** 最多保留 90 天。
 
-DMG 包含 App、推理运行时和 `Applications` 安装快捷方式。首次启动或切换转写模型时，设置窗口会显示下载进度。模型通过 SHA-256 校验后即可听写。开启纠错或人声分离时下载对应的可选模型。失败可以在设置中重试。模型存储在 `~/Library/Application Support/dev.voxloom.app/Models`，后续升级可复用相同版本的模型。
+DMG 包含 App、推理运行时和 `Applications` 安装快捷方式。ASR 模型通过 SHA-256 校验后即可听写。开启纠错或人声分离时下载对应的可选模型。设置可查看各模型的下载状态并重试。模型存储在 `~/Library/Application Support/dev.voxloom.app/Models`，后续升级可复用相同版本的模型。
 
 Release 的 Bundle ID 固定为 `dev.voxloom.app`，Debug 固定为 `dev.voxloom.app.debug`。App 使用 ad-hoc 签名，未经 Apple 公证。
 
 在本机打包 Release DMG：
 
 ```bash
-bash scripts/prepare-demo.sh --runtime-only
+bash scripts/prepare-app.sh --runtime-only
 python3 scripts/prepare-voice-isolation.py --runtime-only
 python3 scripts/make-dmg.py --voice-isolation --output .build/distribution/Voxloom-release-arm64.dmg
 ```

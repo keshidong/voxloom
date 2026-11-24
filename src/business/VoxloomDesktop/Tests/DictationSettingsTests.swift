@@ -3,6 +3,22 @@ import Testing
 @testable import VoxloomDesktop
 
 struct DictationSettingsTests {
+    @Test func recognitionDefaultsToChineseAndKeepsAnExplicitLanguage() throws {
+        let identifier = UUID().uuidString
+        let defaults = try #require(UserDefaults(suiteName: identifier))
+        defer { defaults.removePersistentDomain(forName: identifier) }
+
+        #expect(DictationSettings().language == .chinese)
+        #expect(DictationSettings(defaults: defaults).language == .chinese)
+        defaults.set(["language": "unknown"], forKey: "dictation.settings")
+        #expect(DictationSettings(defaults: defaults).language == .chinese)
+
+        var selected = DictationSettings()
+        selected.language = .automatic
+        selected.save(to: defaults)
+        #expect(DictationSettings(defaults: defaults).language == .automatic)
+    }
+
     @Test func correctionIsOffByDefaultAndCanBeEnabled() throws {
         let identifier = UUID().uuidString
         let defaults = try #require(UserDefaults(suiteName: identifier))

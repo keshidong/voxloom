@@ -44,7 +44,7 @@ jobs:
 
       - name: Prepare app runtimes
         run: |
-          bash scripts/prepare-demo.sh --runtime-only
+          bash scripts/prepare-app.sh --runtime-only
           python3 scripts/prepare-voice-isolation.py --runtime-only
 
       - name: Build and verify DMG
