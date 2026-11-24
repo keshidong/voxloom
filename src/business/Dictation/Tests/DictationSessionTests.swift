@@ -40,8 +40,8 @@ import Testing
         })
         let recognizer = ContextRecordingRecognizer()
         let corrector = DraftCorrector()
-        session.setCorrector(corrector, vocabulary: "项目词汇")
-        session.start(recognizer: recognizer, options: .init(context: "项目词汇"))
+        session.setCorrector(corrector, vocabulary: "项目词汇 Voxloom")
+        session.start(recognizer: recognizer, options: .init(context: "项目词汇 Voxloom"))
         try await waitUntil { capture.sink != nil }
         capture.sink?([1000, -1000])
         try await waitUntil { session.state.live.samples.count == 2 }
@@ -53,8 +53,9 @@ import Testing
         let hints = try #require(await recognizer.options.first?.context)
         #expect(hints.contains("项目词汇"))
         #expect(hints.contains("Voxloom"))
+        #expect(hints.split(whereSeparator: \.isWhitespace).filter { $0 == "Voxloom" }.count == 1)
         #expect(!hints.contains(surrounding))
-        #expect(await corrector.requests == [.init(text: "去公园。", vocabulary: "项目词汇", surroundingText: surrounding)])
+        #expect(await corrector.requests == [.init(text: "去公园。", vocabulary: "项目词汇 Voxloom", surroundingText: surrounding)])
         #expect(session.state.text == "去公园。")
         await session.shutdown()
     }
@@ -87,6 +88,31 @@ import Testing
         }
         try await waitUntil { session.state.isReadyForAutomaticInsertion }
         #expect(session.state.text == (timesOut ? "去公园。" : "去公园！"))
+        await session.shutdown()
+    }
+
+    @Test func recentMessagesSupplyTermsToRecognitionWhileCorrectionReceivesTheDraft() async throws {
+        let capture = DraftCapture()
+        let draft = "先检查 LocalDraft。"
+        let message = "昨天刚部署了 NightlyCompiler，今天继续。"
+        let session = DictationSession(live: LiveSpeechSession(capture: capture),
+            readContext: { .init(draft: draft, recentMessages: [message]) }, recognitionPromptByteLimit: 192)
+        let recognizer = ContextRecordingRecognizer()
+        let corrector = DraftCorrector()
+        session.setCorrector(corrector, vocabulary: "Core Audio")
+        session.start(recognizer: recognizer, options: .init(context: "Core Audio"))
+        try await waitUntil { capture.sink != nil }
+        capture.sink?([1000, -1000])
+        try await waitUntil { session.state.live.samples.count == 2 }
+        session.stopForAutomaticInsertion()
+        try await waitUntil { session.state.isReadyForAutomaticInsertion }
+
+        let prompt = try #require(await recognizer.options.first?.context)
+        #expect(prompt.hasPrefix("Core Audio"))
+        #expect(prompt.contains("LocalDraft"))
+        #expect(prompt.contains("NightlyCompiler"))
+        #expect(!prompt.contains(message))
+        #expect(await corrector.requests == [.init(text: "去公园。", vocabulary: "Core Audio", surroundingText: draft)])
         await session.shutdown()
     }
 

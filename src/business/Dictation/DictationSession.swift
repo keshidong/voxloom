@@ -38,13 +38,23 @@ public struct DictationState: Sendable, Equatable {
     private var cancellingRecording: Int?
     private var automaticInsertion: AutomaticInsertion?
 
+    public convenience init(live: LiveSpeechSession, existingText: String = "",
+                            correctionScheduler: any SchedulerType = MainScheduler.instance,
+                            readInputContext: (@Sendable () async -> String)? = nil) {
+        self.init(live: live, existingText: existingText, correctionScheduler: correctionScheduler,
+                  readContext: readInputContext.map { read in { @Sendable in .init(draft: await read()) } })
+    }
+
     public init(live: LiveSpeechSession, existingText: String = "",
                 correctionScheduler: any SchedulerType = MainScheduler.instance,
-                readInputContext: (@Sendable () async -> String)? = nil) {
+                readContext: (@Sendable () async -> DictationContextSnapshot)?,
+                recognitionPromptByteLimit: Int? = nil) {
         self.live = live
         scheduler = correctionScheduler
         self.existingText = existingText
-        inputContext = readInputContext.map { DictationInputContext(read: $0) }
+        inputContext = if readContext != nil || recognitionPromptByteLimit != nil {
+            DictationInputContext(read: readContext, promptByteLimit: recognitionPromptByteLimit)
+        } else { nil }
         let initial = DictationState(text: existingText)
         state = initial
         output = BehaviorSubject(value: initial)

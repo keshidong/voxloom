@@ -31,6 +31,10 @@ import SpeechFoundation
     private var availability = DictationAvailability()
     private var activationObservation: (any NSObjectProtocol)?
     private var menuItem: NSStatusItem?
+    #if DEBUG
+    private let debugContextLog = DebugContextLog()
+    private lazy var debugContextWindow = DebugContextLogWindow(log: debugContextLog)
+    #endif
 
     init(root: URL, defaults: UserDefaults = .standard, pasteboard: NSPasteboard = .general,
          recognizer: ((DictationSettings) -> any SpeechRecognizer)? = nil,
@@ -55,9 +59,16 @@ import SpeechFoundation
             recognizer: recognizer ?? models.recognizer, corrector: models.corrector,
             insertion: insertion ?? CaretInsertion(foregroundTarget: SystemPaste.foregroundTarget,
                 canPost: { permissions.canInsert }, paste: systemPaste.paste, captureFocus: SystemTextInput.captureFocus),
-            readInputContext: { permissions.isTrusted() ? SystemTextInput.contextReader() : nil })
+            readContext: { settings in
+                guard permissions.isTrusted() else { return nil }
+                return SystemTextInput.contextReader(includeDraft: settings.usesInputContext,
+                                                     includeConversation: settings.usesConversationContext)
+            })
         settingsWindow = SettingsWindow(settings: selected)
         super.init()
+        #if DEBUG
+        flow.debugContextLog = debugContextLog
+        #endif
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -109,6 +120,9 @@ import SpeechFoundation
         menuItem = nil
         systemPaste.restoreClipboard()
         await flow.shutdown()
+        #if DEBUG
+        debugContextLog.clear()
+        #endif
     }
 
     private func wireControls() {
@@ -135,7 +149,7 @@ import SpeechFoundation
     private func makeMenu() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         item.button?.image = NSImage(systemSymbolName: "waveform", accessibilityDescription: "Voxloom")
-        item.button?.toolTip = "Voxloom"
+        item.button?.toolTip = Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String ?? "Voxloom"
         let menu = NSMenu()
         for (title, action, key) in [
             ("显示语音条", #selector(showOverlay), ""), ("设置…", #selector(showSettings), ","),
@@ -144,6 +158,11 @@ import SpeechFoundation
             let entry = menu.addItem(withTitle: title, action: action, keyEquivalent: key)
             entry.target = self
         }
+        #if DEBUG
+        let context = NSMenuItem(title: "ASR 上下文日志…", action: #selector(showContextLog), keyEquivalent: "")
+        context.target = self
+        menu.insertItem(context, at: 2)
+        #endif
         item.menu = menu
         menuItem = item
     }
@@ -172,6 +191,14 @@ import SpeechFoundation
         settingsWindow.window?.makeKeyAndOrderFront(nil)
         activate()
     }
+
+    #if DEBUG
+    @objc func showContextLog() {
+        debugContextWindow.showWindow(nil)
+        debugContextWindow.window?.makeKeyAndOrderFront(nil)
+        activate()
+    }
+    #endif
 
     @objc private func runSample() {
         do { flow.trySample(try models.sample(for: flow.settings)) }

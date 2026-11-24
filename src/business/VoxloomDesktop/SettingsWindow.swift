@@ -8,6 +8,7 @@ import SpeechFoundation
     let vocabulary = NSTextField()
     let gpu = NSButton(checkboxWithTitle: "使用 GPU 加速 Whisper 和纠错", target: nil, action: nil)
     let inputContext = NSButton(checkboxWithTitle: "用光标附近的文字辅助转写和纠错", target: nil, action: nil)
+    let conversationContext = NSButton(checkboxWithTitle: "用当前对话的近期消息辅助转写", target: nil, action: nil)
     let enableAccessibility = NSButton(title: "启用辅助功能", target: nil, action: nil)
     private let permissionStatus = NSTextField(labelWithString: "")
     var onChange: ((DictationSettings) -> Void)?
@@ -48,7 +49,7 @@ import SpeechFoundation
                                   (language, "语言"), (vocabulary, "词汇提示")] {
             control.setAccessibilityLabel(label)
         }
-        for control in [recognition, correction, language, gpu, inputContext] {
+        for control in [recognition, correction, language, gpu, inputContext, conversationContext] {
             control.target = self
             control.action = #selector(changed)
         }
@@ -71,7 +72,8 @@ import SpeechFoundation
         permissions.spacing = 10
         let separator = NSBox()
         separator.boxType = .separator
-        let stack = NSStackView(views: [heading, hint, models, gpu, inputContext, separator, permissionHeading, permissions])
+        let stack = NSStackView(views: [heading, hint, models, gpu, inputContext, conversationContext,
+                                       separator, permissionHeading, permissions])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 12
@@ -94,6 +96,7 @@ import SpeechFoundation
         vocabulary.stringValue = settings.vocabulary
         gpu.state = settings.usesGPU ? .on : .off
         inputContext.state = settings.usesInputContext ? .on : .off
+        conversationContext.state = settings.usesConversationContext ? .on : .off
     }
 
     func controlTextDidChange(_ notification: Notification) { changed() }
@@ -107,6 +110,7 @@ import SpeechFoundation
         selected.vocabulary = String(vocabulary.stringValue.prefix(240))
         selected.usesGPU = gpu.state == .on
         selected.usesInputContext = inputContext.state == .on
+        selected.usesConversationContext = conversationContext.state == .on
         onChange?(selected)
     }
 }

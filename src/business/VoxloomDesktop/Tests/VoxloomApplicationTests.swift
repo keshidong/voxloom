@@ -103,6 +103,16 @@ import Testing
         #expect(app.settingsWindow.inputContext.state == .on)
         app.settingsWindow.inputContext.performClick(nil)
         #expect(!DictationSettings(defaults: defaults).usesInputContext)
+        #expect(app.settingsWindow.conversationContext.state == .off)
+        app.settingsWindow.conversationContext.performClick(nil)
+        #expect(DictationSettings(defaults: defaults).usesConversationContext)
+        #expect(!DictationSettings(defaults: defaults).usesInputContext)
+        #if DEBUG
+        app.showContextLog()
+        let logWindow = try #require(NSApp.windows.first { $0.title == "ASR 上下文日志" })
+        #expect(logWindow.isVisible)
+        logWindow.orderOut(nil)
+        #endif
         let settingsAction = try #require(findButton(labeled: "启用辅助功能", in: settingsContent))
         settingsAction.performClick(nil)
         #expect(accessibilityRequests == 2)

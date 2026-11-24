@@ -14,13 +14,21 @@ APP_ICON = ROOT / "src/business/VoxloomDesktop/App/Resources/AppIcon.icns"
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--product", choices=("voice-demo", "voxloom"), default="voice-demo")
+    parser.add_argument("-c", "--configuration", choices=("debug", "release"), default="release")
     parser.add_argument("--output")
     parser.add_argument("--bundle-id")
     arguments = parser.parse_args()
     standalone = arguments.product == "voxloom"
-    output = arguments.output or ("Voxloom.app" if standalone else "voxloom 0.3.2.app")
-    bundle_id = arguments.bundle_id or ("dev.voxloom.app" if standalone else "dev.voxloom.demo.v032")
-    subprocess.run(["bash", "scripts/swift-command.sh", "build", "-c", "release", "--product", arguments.product],
+    name = "Voxloom" if standalone else "voxloom 0.3.2"
+    identifier = "dev.voxloom.app" if standalone else "dev.voxloom.demo.v032"
+    if arguments.configuration == "debug":
+        name += " Debug"
+        identifier += ".debug"
+    output = arguments.output or f"{name}.app"
+    bundle_id = arguments.bundle_id or identifier
+    build_path = ROOT / ".build" / arguments.configuration
+    subprocess.run(["bash", "scripts/swift-command.sh", "build", "-c", arguments.configuration,
+                    "--product", arguments.product],
                    cwd=ROOT, check=True)
     app = ROOT / output
     contents = app / "Contents"
@@ -28,7 +36,7 @@ def main():
     resources = contents / "Resources"
     executable.mkdir(parents=True, exist_ok=True)
     resources.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(ROOT / ".build/release" / arguments.product, executable / arguments.product)
+    shutil.copy2(build_path / arguments.product, executable / arguments.product)
     source_files = {
         "whisper-cli": ROOT / ".runtime/whisper-build/bin/whisper-cli",
         "ggml-tiny.bin": ROOT / "models/ggml-tiny.bin",
@@ -53,7 +61,7 @@ def main():
             os.link(source, destination)
         except OSError:
             shutil.copy2(source, destination)
-    for bundle in (ROOT / ".build/release").glob("RxSwift_*.bundle"):
+    for bundle in build_path.glob("RxSwift_*.bundle"):
         shutil.copytree(bundle, resources / bundle.name, dirs_exist_ok=True)
     def link_or_copy(source, destination):
         if os.path.exists(destination):

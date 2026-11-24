@@ -54,20 +54,29 @@ import Testing
         #expect(await !qwen.loaded)
     }
 
-    @Test func holdingFnCapturesOneContextAndTurningItOffSkipsTheNextRead() async throws {
+    @Test func holdingFnCapturesOneSnapshotWithOnlyTheEnabledContextSources() async throws {
         let capture = FlowCapture()
         let recognizer = ContextSinkRecognizer()
         var snapshots = 0
         let flow = VoxloomFlow(settings: .init(), capture: { capture }, recognizer: { _ in recognizer },
             corrector: { _ in nil }, insertion: .init(foregroundTarget: { 101 }, canPost: { false }, paste: { _, _ in false }),
-            readInputContext: {
+            readContext: { settings in
                 snapshots += 1
-                return { "排查 Voxloom 的输入框" }
+                return {
+                    .init(draft: settings.usesInputContext ? "排查 Voxloom 的输入框" : "",
+                          conversation: settings.usesConversationContext
+                              ? .success(["讨论 NightlyCompiler"]) : .failure(.disabled))
+                }
             })
 
-        for enabled in [true, false] {
+        #if DEBUG
+        let contextLog = DebugContextLog()
+        flow.debugContextLog = contextLog
+        #endif
+        for (draft, history) in [(true, false), (false, true), (false, false)] {
             var settings = flow.settings
-            settings.usesInputContext = enabled
+            settings.usesInputContext = draft
+            settings.usesConversationContext = history
             flow.apply(settings)
             flow.handle(.start)
             try await reaches { capture.receive != nil }
@@ -75,13 +84,51 @@ import Testing
             try await reaches { flow.state?.live.samples.count == 2 }
             flow.handle(.stop)
             try await reaches { flow.canStart }
+            #if DEBUG
+            if history {
+                let prompt = try #require(await recognizer.contexts.last)
+                #expect(contextLog.text.contains("1. 讨论 NightlyCompiler"))
+                #expect(contextLog.text.hasSuffix(prompt))
+            }
+            #endif
         }
 
         let calls = await recognizer.contexts
-        try #require(calls.count == 2)
-        #expect(snapshots == 1)
+        try #require(calls.count == 3)
+        #expect(snapshots == 2)
         #expect(calls[0].contains("Voxloom"))
-        #expect(calls[1].isEmpty)
+        #expect(!calls[0].contains("NightlyCompiler"))
+        #expect(calls[1].contains("NightlyCompiler"))
+        #expect(!calls[1].contains("Voxloom"))
+        #expect(calls[2].isEmpty)
+        await flow.shutdown()
+    }
+
+    @Test(arguments: [RecognitionModel.qwen, .whisperTurbo])
+    func limitsThePromptForTheSelectedEngineEvenWithoutInputContext(model: RecognitionModel) async throws {
+        let capture = FlowCapture()
+        let recognizer = ContextSinkRecognizer()
+        var settings = DictationSettings()
+        settings.model = model
+        settings.usesInputContext = false
+        let terms = ["Voxloom"] + (0..<55).map { "词汇编号\($0)" }
+        settings.vocabulary = terms.joined(separator: " ")
+        let flow = VoxloomFlow(settings: settings, capture: { capture }, recognizer: { _ in recognizer },
+            corrector: { _ in nil }, insertion: .init(foregroundTarget: { 101 }, canPost: { false }, paste: { _, _ in false }))
+
+        flow.handle(.start)
+        try await reaches { capture.receive != nil }
+        capture.receive?([3000, -3000])
+        try await reaches { flow.state?.live.samples.count == 2 }
+        flow.handle(.stop)
+        try await reaches { flow.canStart }
+
+        let prompt = try #require(await recognizer.contexts.first)
+        let included = prompt.split(whereSeparator: \.isWhitespace).map(String.init)
+        let limit = model == .qwen ? 512 : 192
+        #expect(prompt.utf8.count <= limit)
+        #expect(included.first == "Voxloom")
+        #expect(included == Array(terms.prefix(included.count)))
         await flow.shutdown()
     }
 

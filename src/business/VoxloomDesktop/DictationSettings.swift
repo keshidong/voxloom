@@ -4,6 +4,8 @@ import SpeechFoundation
 enum RecognitionModel: String, CaseIterable {
     case qwen, whisperTurbo, whisperBase, whisperTiny
 
+    var promptByteLimit: Int { self == .qwen ? 512 : 192 }
+
     var title: String {
         switch self {
         case .qwen: "Qwen3-ASR 1.7B"
@@ -20,6 +22,7 @@ struct DictationSettings: Equatable {
     var correctsText = false
     var usesGPU = true
     var usesInputContext = true
+    var usesConversationContext = false
     var vocabulary = ""
 
     init() {}
@@ -31,13 +34,15 @@ struct DictationSettings: Equatable {
         correctsText = saved?["correction"] as? Bool ?? correctsText
         usesGPU = saved?["gpu"] as? Bool ?? true
         usesInputContext = saved?["inputContext"] as? Bool ?? true
+        usesConversationContext = saved?["conversationContext"] as? Bool ?? usesConversationContext
         vocabulary = saved?["vocabulary"] as? String ?? ""
     }
 
     func save(to defaults: UserDefaults) {
         defaults.set([
             "model": model.rawValue, "language": language.rawValue, "correction": correctsText,
-            "gpu": usesGPU, "vocabulary": vocabulary, "inputContext": usesInputContext
+            "gpu": usesGPU, "vocabulary": vocabulary, "inputContext": usesInputContext,
+            "conversationContext": usesConversationContext
         ], forKey: Self.key)
     }
 
