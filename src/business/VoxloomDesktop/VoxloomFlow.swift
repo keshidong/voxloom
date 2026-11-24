@@ -42,7 +42,9 @@ import AppKit
     var canStart: Bool {
         heldRecording == nil && startup == nil && insertionRequest == nil && (state?.live.phase ?? .idle) == .idle
     }
-    var canTrySample: Bool { canStart && (didSendInsertion || state?.text.isEmpty != false) }
+    var canTrySample: Bool {
+        recognitionAvailable(settings) && canStart && (didSendInsertion || state?.text.isEmpty != false)
+    }
     var canInsert: Bool {
         guard heldRecording == nil, startup == nil, let state, !didSendInsertion,
               !state.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
@@ -57,6 +59,7 @@ import AppKit
     private let insertion: CaretInsertion
     private let readContext: (DictationSettings) -> (@Sendable () async -> DesktopContextReading)?
     private let prepareVoiceIsolation: () throws -> VoiceIsolationPreparation
+    private let recognitionAvailable: (DictationSettings) -> Bool
     private var session: DictationSession?
     private var observation: (any Disposable)?
     private var startup: Task<Void, Never>?
@@ -72,7 +75,8 @@ import AppKit
          readContext: @escaping (DictationSettings) -> (@Sendable () async -> DesktopContextReading)? = { _ in nil },
          prepareVoiceIsolation: @escaping () throws -> VoiceIsolationPreparation = {
              throw VoiceIsolationSetupError.unavailable
-         }) {
+         },
+         recognitionAvailable: @escaping (DictationSettings) -> Bool = { _ in true }) {
         self.settings = settings
         self.capture = capture
         makeRecognizer = recognizer
@@ -80,12 +84,17 @@ import AppKit
         self.insertion = insertion
         self.readContext = readContext
         self.prepareVoiceIsolation = prepareVoiceIsolation
+        self.recognitionAvailable = recognitionAvailable
     }
 
     func handle(_ action: FunctionKeyGesture.Action) {
         switch action {
         case .start:
             guard canStart else { return }
+            guard recognitionAvailable(settings) else {
+                showNotice("转写模型尚未就绪，请在设置中查看下载进度")
+                return
+            }
             begin(capture(), held: true)
         case .stop: stopRecording(automatic: true)
         case .interrupted: stopRecording(automatic: false)
@@ -117,7 +126,7 @@ import AppKit
     }
 
     func prepareForFirstRecording() {
-        guard canStart, settings.model == .qwen, activeEngine == nil else { return }
+        guard canStart, settings.model == .qwen, activeEngine == nil, recognitionAvailable(settings) else { return }
         let recognizer = makeRecognizer(settings)
         activeEngine = (RecognitionEngine(settings), recognizer)
         enginePreparation = Task(priority: .utility) { await recognizer.prepare() }

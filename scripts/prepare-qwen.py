@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Pinned, workspace-local Qwen ASR + correction setup; runtime stays offline."""
 from pathlib import Path
+import argparse
 import hashlib
 from importlib.metadata import distributions
 import json
@@ -37,6 +38,9 @@ def download(url, destination, checksum):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--runtime-only", action="store_true", help="Skip model weights")
+    arguments = parser.parse_args()
     RUNTIME.mkdir(exist_ok=True)
     uv_archive = RUNTIME / "uv-aarch64-apple-darwin.tar.gz"
     download("https://github.com/astral-sh/uv/releases/download/0.13.9/uv-aarch64-apple-darwin.tar.gz", uv_archive,
@@ -55,13 +59,10 @@ def main():
     if any(installed.get(name.lower().replace("_", "-")) != version for name, version in wanted):
         run(uv, "pip", "install", "--python", python, "--target", site, "-r", ROOT / "scripts/qwen-asr-requirements.txt")
 
-    revision = "78a389c776a5483b2d0d4ea5494e11012e0d6159"
-    for name, checksum in json.loads((ROOT / "scripts/qwen-asr-assets.json").read_text()).items():
-        download(f"https://huggingface.co/mlx-community/Qwen3-ASR-1.7B-4bit/resolve/{revision}/{name}",
-                 ROOT / "models/Qwen3-ASR-1.7B-4bit" / name, checksum)
-    download("https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/a06e946bb6b655725eafa393f4a9745d460374c9/Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
-             ROOT / "models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
-             "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597")
+    if not arguments.runtime_only:
+        assets = json.loads((ROOT / "scripts/model-downloads.json").read_text())
+        for file in assets["qwen"] + assets["correction"]:
+            download(file["url"], ROOT / "models" / file["path"], file["sha256"])
 
     archive = RUNTIME / "llama.cpp-1.0.0.tar.gz"
     download("https://github.com/ggml-org/llama.cpp/archive/refs/tags/v1.0.0.tar.gz", archive,

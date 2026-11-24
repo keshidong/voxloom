@@ -100,18 +100,22 @@ python3 scripts/smoke-qwen.py --app 'voxloom 0.3.2.app' # Run the tests with bun
 python3 scripts/smoke-whisper.py              # Run the Whisper API and CLI end-to-end checks.
 ```
 
-`scripts/prepare-qwen.py` installs the pinned Qwen revisions and dependencies and checks SHA-256 hashes. Resources go in `.runtime/` and `models/` without sudo. In offline mode, audio and text stay on the device and recognition and correction use the installed resources. The app is signed ad hoc for local use. The `voice-input` CLI also supports Whisper file transcription.
+`scripts/prepare-qwen.py` installs the pinned Qwen revisions and dependencies and checks SHA-256 hashes. Development resources go in `.runtime/` and `models/`. Once models are installed, recognition, correction, and voice isolation run locally. Audio and text stay on the device. The `voice-input` CLI also supports Whisper file transcription.
 
 The [0.3.2 verification summary](docs/reports/0.3.2/README.md) and the [first Whisper acceptance report](docs/acceptance-01.md) document the test results. Complete local logs go in `.build/reports/`. Real-model end-to-end tests are outside the unit and module coverage figures. See the [third-party resources](docs/third-party.md) for model and dependency sources.
 
 ### Package a macOS DMG
 
-Pushing a `v*` version tag triggers a Release build for Apple Silicon. Use **Actions → Package Voxloom DMG → Run workflow** to select a Release or Debug build manually. Sign in to GitHub and download the DMG from the run's **Artifacts** section. The DMG is retained for up to 90 days and includes the offline models, voice isolation runtime, and an `Applications` shortcut. The app is signed ad hoc and has no Apple notarization.
+Pushing a `v*` version tag builds a Release DMG for Apple Silicon and publishes it on the corresponding **Releases** page. Use **Actions → Package Voxloom DMG → Run workflow** to select a Release or Debug build manually. Workflow artifacts are retained for up to 90 days.
+
+The DMG includes the app, inference runtimes, and an `Applications` shortcut. On first launch or when switching recognition models, Settings shows download progress. Dictation is available once the selected model passes SHA-256 verification. The correction and voice isolation models download when enabled. Failed downloads can be retried in Settings. Models in `~/Library/Application Support/dev.voxloom.app/Models` are reused across upgrades that require the same model versions.
+
+The Release bundle ID is `dev.voxloom.app` and the Debug bundle ID is `dev.voxloom.app.debug`. The app is signed ad hoc and has no Apple notarization.
 
 To build the Release DMG locally, run the following commands.
 
 ```bash
-bash scripts/prepare-demo.sh --prepare-only
-python3 scripts/prepare-voice-isolation.py
+bash scripts/prepare-demo.sh --runtime-only
+python3 scripts/prepare-voice-isolation.py --runtime-only
 python3 scripts/make-dmg.py --voice-isolation --output .build/distribution/Voxloom-release-arm64.dmg
 ```

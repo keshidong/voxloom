@@ -34,9 +34,10 @@ def write_pcm(path, audio):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--assets", type=Path, required=True)
+    parser.add_argument("--weights-directory", type=Path)
     args = parser.parse_args()
     config = json.loads((args.assets / "engine.json").read_text())
-    matcher = load_matcher(args.assets, config["model"], config.get("threads", 4), config["backend"])
+    matcher = load_matcher(args.weights_directory or args.assets, config["model"], config.get("threads", 4), config["backend"])
 
     @lru_cache(maxsize=6)
     def enroll(references):

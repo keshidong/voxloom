@@ -13,6 +13,9 @@ import SpeechFoundation
     let enableAccessibility = NSButton(title: "启用辅助功能", target: nil, action: nil)
     private let permissionStatus = NSTextField(labelWithString: "")
     private let voiceStatus = NSTextField(labelWithString: "")
+    private let recognitionDownload = ModelDownloadRow()
+    private let correctionDownload = ModelDownloadRow()
+    private let isolationDownload = ModelDownloadRow()
     private var voiceRows: [(kind: VoiceSampleKind, label: NSTextField, record: NSButton,
                              play: NSButton, remove: NSButton)] = []
     var onChange: ((DictationSettings) -> Void)?
@@ -20,9 +23,10 @@ import SpeechFoundation
     var onPlayVoice: ((VoiceSampleKind) -> Void)?
     var onRemoveVoice: ((VoiceSampleKind) -> Void)?
     var onClose: (() -> Void)?
+    var onRetryModel: ((String) -> Void)?
 
-    init(settings: DictationSettings) {
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 460, height: 660),
+    init(settings: DictationSettings, hasModelDownloads: Bool = false) {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 460, height: hasModelDownloads ? 756 : 660),
                               styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.title = "Voxloom 设置"
         window.isReleasedWhenClosed = false
@@ -82,7 +86,8 @@ import SpeechFoundation
         let separator = NSBox()
         separator.boxType = .separator
         let voiceSection = makeVoiceSection()
-        let stack = NSStackView(views: [heading, hint, models, gpu, inputContext, conversationContext,
+        let stack = NSStackView(views: [heading, hint, models, recognitionDownload, correctionDownload,
+                                       gpu, inputContext, conversationContext,
                                        separator, voiceSection, permissionHeading, permissions])
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -122,12 +127,22 @@ import SpeechFoundation
         let rows = NSGridView(views: voiceRows.map { [$0.label, $0.record, $0.play, $0.remove] })
         rows.rowSpacing = 4
         rows.columnSpacing = 12
-        let section = NSStackView(views: [heading, voiceIsolation, prompt, example, rows, voiceStatus])
+        let section = NSStackView(views: [heading, voiceIsolation, isolationDownload, prompt, example, rows, voiceStatus])
         section.orientation = .vertical
         section.alignment = .leading
         section.spacing = 6
         example.widthAnchor.constraint(lessThanOrEqualTo: section.widthAnchor).isActive = true
         return section
+    }
+
+    func updateModelDownloads(_ setup: ModelPreparation, settings: DictationSettings) {
+        let model = settings.model
+        recognitionDownload.render(model.title, status: setup.status(for: model.rawValue))
+        correctionDownload.render("纠错模型", status: settings.correctsText ? setup.status(for: "correction") : nil)
+        isolationDownload.render("人声分离模型", status: settings.usesVoiceIsolation ? setup.status(for: "voiceIsolation") : nil)
+        recognitionDownload.onRetry = { [weak self] in self?.onRetryModel?(model.rawValue) }
+        correctionDownload.onRetry = { [weak self] in self?.onRetryModel?("correction") }
+        isolationDownload.onRetry = { [weak self] in self?.onRetryModel?("voiceIsolation") }
     }
 
     func updateVoiceEnrollment(_ enrollment: VoiceEnrollment, modelAvailable: Bool) {

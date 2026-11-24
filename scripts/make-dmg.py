@@ -17,13 +17,13 @@ def package_disk_image(configuration, output, voice_isolation):
     build.mkdir(exist_ok=True)
     output.parent.mkdir(parents=True, exist_ok=True)
 
-    # Keep the app on the build volume so the app packager can hard-link the models.
     with tempfile.TemporaryDirectory(dir=build, prefix="dmg-source-") as source_directory, \
             tempfile.TemporaryDirectory(dir=output.parent, prefix="dmg-output-") as image_directory:
         source = Path(source_directory)
         command = [
             sys.executable, "scripts/make-demo.py", "--product", "voxloom",
             "--configuration", configuration, "--output", str(source / f"{app_name}.app"),
+            "--external-models",
         ]
         if voice_isolation:
             command.append("--voice-isolation")

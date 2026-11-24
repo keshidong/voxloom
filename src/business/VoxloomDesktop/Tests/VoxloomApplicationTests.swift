@@ -7,6 +7,66 @@ import Testing
 @testable import VoxloomDesktop
 
 @MainActor @Suite(.serialized) struct VoxloomApplicationTests {
+    @Test func firstLaunchExposesTheDownloadAndBlocksRecordingUntilTheSelectedModelIsReady() async throws {
+        _ = NSApplication.shared
+        let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let manifest = """
+        {"qwen":[{"path":"weights","url":"https://example.com/required",
+        "sha256":"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df","bytes":2}],
+        "correction":[{"path":"correction","url":"https://example.com/optional",
+        "sha256":"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df","bytes":2}]}
+        """
+        try Data(manifest.utf8).write(to: directory.appending(path: "model-downloads.json"))
+        let suite = UUID().uuidString
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let gate = AsyncStream<Void>.makeStream()
+        let cache = directory.appending(path: "models")
+        let downloads = try #require(LocalModels(root: directory, downloadDirectory: cache).downloads)
+        let capture = FlowCapture()
+        let engine = PrewarmTestRecognizer()
+        let app = VoxloomCoordinator(root: directory, defaults: defaults, recognizer: { _ in engine },
+            capture: { capture }, activate: {}, permissions: .init(isTrusted: { false }, canPostEvents: { false }),
+            downloadDirectory: cache, downloadModel: { url, _ in
+                if url.lastPathComponent == "required" {
+                    var permit = gate.stream.makeAsyncIterator()
+                    _ = await permit.next()
+                }
+                let file = directory.appending(path: url.lastPathComponent)
+                try Data("ok".utf8).write(to: file)
+                return file
+            })
+        app.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
+        defer {
+            gate.continuation.finish()
+            app.settingsWindow.window?.orderOut(nil)
+            app.overlay.panel.orderOut(nil)
+        }
+        #expect(app.settingsWindow.window?.isVisible == true)
+        app.flow.handle(.start)
+        #expect(capture.receive == nil)
+        #expect(await engine.prepares == 0)
+        #expect(app.flow.notice?.contains("转写模型尚未就绪") == true)
+
+        gate.continuation.yield(())
+        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while await engine.prepares == 0 && ContinuousClock.now < deadline { await Task.yield() }
+        #expect(await engine.prepares == 1)
+        app.flow.handle(.start)
+        while capture.receive == nil && ContinuousClock.now < deadline { await Task.yield() }
+        #expect(capture.receive != nil)
+        #expect(!downloads.isInstalled("correction"))
+        let correction = app.settingsWindow.correction
+        correction.selectItem(at: 0)
+        correction.sendAction(correction.action, to: correction.target)
+        let optionalDeadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while !downloads.isInstalled("correction") && ContinuousClock.now < optionalDeadline { await Task.yield() }
+        #expect(downloads.isInstalled("correction"))
+        await app.stop()
+    }
+
     @Test func launchingPreparesTheSelectedEngineWithoutStartingCapture() async throws {
         _ = NSApplication.shared
         let suite = UUID().uuidString

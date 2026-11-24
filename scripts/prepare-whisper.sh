@@ -8,7 +8,8 @@ case "$model_name" in
     base) model_sha=465707469ff3a37a2b9b8d8f89f2f99de7299dac ;;
     large-v3-turbo-q5_0) model_sha=e050f7970618a659205450ad97eb95a18d69c9ee ;;
     silero-v5.1.2) model_sha=a372f48dcf0bd9e4330eef2802bc46e061c19634 ;;
-    *) printf '%s\n' 'Usage: bash scripts/prepare-whisper.sh [tiny|base|large-v3-turbo-q5_0|silero-v5.1.2]' >&2; exit 2 ;;
+    --runtime-only) ;;
+    *) printf '%s\n' 'Usage: bash scripts/prepare-whisper.sh [tiny|base|large-v3-turbo-q5_0|silero-v5.1.2|--runtime-only]' >&2; exit 2 ;;
 esac
 runtime_dir="$project_root/.runtime"
 mkdir -p "$runtime_dir" "$project_root/models"
@@ -41,6 +42,9 @@ fi
 "$cmake_bin" -S "$whisper_source" -B "$runtime_dir/whisper-build" \
     -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DGGML_METAL=ON -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0
 "$cmake_bin" --build "$runtime_dir/whisper-build" --config Release --target whisper-cli -j 4
+if [ "$model_name" = --runtime-only ]; then
+    exit 0
+fi
 
 model_path="$project_root/models/ggml-$model_name.bin"
 model_repository="ggerganov/whisper.cpp"

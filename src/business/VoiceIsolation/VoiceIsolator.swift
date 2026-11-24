@@ -4,18 +4,22 @@ import SpeechFoundation
 /// Isolates one voice from microphone PCM using saved reference recordings.
 public actor VoiceIsolator {
     private let executable: URL
+    private let arguments: [String]
     private var worker: JSONLineWorker?
     private var preparation: Task<Void, Never>?
     private var busy = false
 
-    public init(executable: URL) { self.executable = executable }
+    public init(executable: URL, weightsDirectory: URL? = nil) {
+        self.executable = executable
+        arguments = weightsDirectory.map { ["--weights-directory", $0.path] } ?? []
+    }
 
     deinit { worker?.close() }
 
     public func prepare() async {
         if let preparation { await preparation.value; return }
         guard !Task.isCancelled, !busy, worker == nil else { return }
-        let candidate = JSONLineWorker(executable: executable, arguments: [])
+        let candidate = JSONLineWorker(executable: executable, arguments: arguments)
         let preparation = Task { [self] in
             do {
                 try await candidate.prepare(within: .seconds(5))
@@ -63,7 +67,7 @@ public actor VoiceIsolator {
         }
         let request = try JSONEncoder().encode(Request(audio: input.path, references: enrolled, output: output.path,
                                                        previewSession: previewSession))
-        let worker = self.worker ?? JSONLineWorker(executable: executable, arguments: [])
+        let worker = self.worker ?? JSONLineWorker(executable: executable, arguments: arguments)
         self.worker = worker
         do {
             let response = try await withThrowingTaskGroup(of: Data.self) { group in

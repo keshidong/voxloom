@@ -99,18 +99,22 @@ python3 scripts/smoke-qwen.py --app 'voxloom 0.3.2.app'  # 用打包资源重跑
 python3 scripts/smoke-whisper.py         # 保留的 Whisper API / CLI E2E
 ```
 
-Qwen 安装脚本为 `scripts/prepare-qwen.py`，固定模型 revision、SHA256 和依赖版本；资源安装在 `.runtime/` 与 `models/`，不使用 sudo。运行设置离线模式，不上传音频/正文、不自动下载或回退云端。应用使用本机 ad-hoc 签名，未做其他设备分发公证。原 `voice-input` CLI 保持 Whisper 文件转写能力。
+Qwen 开发资源由 `scripts/prepare-qwen.py` 安装，固定模型 revision、SHA256 和依赖版本。资源存放在 `.runtime/` 与 `models/`。安装模型后，转写、纠错和声纹分离都在本机运行，音频和正文不会上传。原 `voice-input` CLI 仍支持 Whisper 文件转写。
 
 当前验证摘要保存在 [docs/reports/0.3.2](docs/reports/0.3.2/README.md)，完整本地报告在 `.build/reports/`，真实模型 E2E 不计入单元/模块覆盖率。历史首个 Whisper 切片记录保留在 [acceptance-01.md](docs/acceptance-01.md)。资源与模型来源见 [第三方说明](docs/third-party.md)。
 
 ### 打包 macOS DMG
 
-推送 `v*` 版本标签时，GitHub Actions 自动构建 Apple Silicon 的 Release DMG。也可以在 **Actions → Package Voxloom DMG → Run workflow** 手动选择 Release 或 Debug。构建完成后登录 GitHub，在该次运行的 **Artifacts** 下载 DMG，文件最多保留 90 天。DMG 内含离线模型、声纹分离运行时和 `Applications` 安装快捷方式。App 使用 ad-hoc 签名，未经 Apple 公证。
+推送 `v*` 版本标签时，GitHub Actions 自动构建 Apple Silicon 的 Release DMG 并上传到对应的 **Releases** 页面。也可以在 **Actions → Package Voxloom DMG → Run workflow** 手动打 Release 或 Debug 包，构建产物在 **Artifacts** 最多保留 90 天。
+
+DMG 包含 App、推理运行时和 `Applications` 安装快捷方式。首次启动或切换转写模型时，设置窗口会显示下载进度。模型通过 SHA-256 校验后即可听写。开启纠错或人声分离时下载对应的可选模型。失败可以在设置中重试。模型存储在 `~/Library/Application Support/dev.voxloom.app/Models`，后续升级可复用相同版本的模型。
+
+Release 的 Bundle ID 固定为 `dev.voxloom.app`，Debug 固定为 `dev.voxloom.app.debug`。App 使用 ad-hoc 签名，未经 Apple 公证。
 
 在本机打包 Release DMG：
 
 ```bash
-bash scripts/prepare-demo.sh --prepare-only
-python3 scripts/prepare-voice-isolation.py
+bash scripts/prepare-demo.sh --runtime-only
+python3 scripts/prepare-voice-isolation.py --runtime-only
 python3 scripts/make-dmg.py --voice-isolation --output .build/distribution/Voxloom-release-arm64.dmg
 ```

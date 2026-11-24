@@ -26,6 +26,7 @@ class DiskImagePackagingTest(unittest.TestCase):
                     app = Path(command[command.index("--output") + 1])
                     self.assertEqual(app.name, app_name)
                     self.assertIn("--voice-isolation", command)
+                    self.assertIn("--external-models", command)
                     app.mkdir()
                 elif command[:2] == ["hdiutil", "create"]:
                     source = Path(command[command.index("-srcfolder") + 1])

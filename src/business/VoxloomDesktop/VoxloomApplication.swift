@@ -6,7 +6,8 @@ import SpeechFoundation
 @MainActor public enum VoxloomApplication {
     public static func run() {
         let app = NSApplication.shared
-        let coordinator = VoxloomCoordinator(root: Bundle.main.resourceURL ?? Bundle.main.bundleURL)
+        let coordinator = VoxloomCoordinator(root: Bundle.main.resourceURL ?? Bundle.main.bundleURL,
+            downloadDirectory: VoxloomCoordinator.modelDirectory)
         app.setActivationPolicy(.accessory)
         app.delegate = coordinator
         app.run()
@@ -20,6 +21,7 @@ import SpeechFoundation
     let flow: VoxloomFlow
     private let defaults: UserDefaults
     private let models: LocalModels
+    private let modelPreparation: ModelPreparation?
     private let enrollment: VoiceEnrollment
     private let voiceIsolator: VoiceIsolator?
     private let pasteboard: NSPasteboard
@@ -54,6 +56,8 @@ import SpeechFoundation
          insertion: CaretInsertion? = nil,
          activate: @escaping () -> Void = { NSApp.activate() },
          permissions: DictationPermissions = .init(),
+         downloadDirectory: URL? = nil,
+         downloadModel: @escaping ModelDownloads.Download = ModelDownloads.fetch,
          voiceSampleDirectory: URL? = nil,
          voiceSamplePlayer: any VoiceSamplePlaying = VoiceSamplePlayback(),
          keyScheduler: any SchedulerType = MainScheduler.instance,
@@ -68,8 +72,9 @@ import SpeechFoundation
                                                                  filterGlobal: DictationEventTap.install) }
         self.replyToQuit = replyToQuit
         let selected = DictationSettings(defaults: defaults)
-        let models = LocalModels(root: root)
+        let models = LocalModels(root: root, downloadDirectory: downloadDirectory)
         self.models = models
+        modelPreparation = models.downloads.map { ModelPreparation(downloads: $0, download: downloadModel) }
         let directory = voiceSampleDirectory ?? Self.voiceSampleDirectory
         let store = VoiceSampleStore(directory: directory)
         enrollment = VoiceEnrollment(store: store, makeCapture: capture, player: voiceSamplePlayer)
@@ -88,25 +93,36 @@ import SpeechFoundation
             },
             prepareVoiceIsolation: {
                 guard let voiceIsolator else { throw VoiceIsolationSetupError.unavailable }
+                guard models.downloads?.isInstalled("voiceIsolation") != false else {
+                    throw VoiceIsolationSetupError.unavailable
+                }
                 let references = try VoiceSampleKind.allCases.compactMap { try store.read($0) }
                 guard !references.isEmpty else { throw VoiceIsolationSetupError.missingSamples }
                 let session = UUID()
                 return VoiceIsolationPreparation(
                     preview: { audio in try await voiceIsolator.preview(audio, references: references, session: session) },
                     final: { audio in try await voiceIsolator.isolate(audio, references: references) })
-            })
-        settingsWindow = SettingsWindow(settings: selected)
+            },
+            recognitionAvailable: { models.canRecognize($0.model) })
+        settingsWindow = SettingsWindow(settings: selected, hasModelDownloads: modelPreparation != nil)
         super.init()
         #if DEBUG
         flow.debugContextLog = debugContextLog
         #endif
     }
 
-    private static var voiceSampleDirectory: URL {
+    private static var applicationSupport: URL {
         let manager = FileManager.default
-        let support = manager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+        return manager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? manager.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support")
-        return support.appendingPathComponent(Bundle.main.bundleIdentifier ?? "dev.voxloom.app")
+    }
+
+    fileprivate static var modelDirectory: URL {
+        applicationSupport.appending(path: "dev.voxloom.app/Models", directoryHint: .isDirectory)
+    }
+
+    private static var voiceSampleDirectory: URL {
+        applicationSupport.appendingPathComponent(Bundle.main.bundleIdentifier ?? "dev.voxloom.app")
             .appendingPathComponent("Voice Samples", isDirectory: true)
     }
 
@@ -121,6 +137,8 @@ import SpeechFoundation
             MainActor.assumeIsolated { self?.refreshKeyboardMonitoring() }
         }
         connectViews()
+        if !models.canRecognize(flow.settings.model) { showSettings() }
+        prepareSelectedModels()
         flow.prepareForFirstRecording()
         prepareVoiceIsolationIfEnabled()
     }
@@ -162,6 +180,7 @@ import SpeechFoundation
         if let menuItem { NSStatusBar.system.removeStatusItem(menuItem) }
         menuItem = nil
         systemPaste.restoreClipboard()
+        await modelPreparation?.stop()
         await flow.shutdown()
         await voiceIsolator?.shutdown()
         await voicePreparation?.value
@@ -187,12 +206,18 @@ import SpeechFoundation
         overlay.onEdit = { [weak flow] text, visible, range in flow?.edit(text, basedOn: visible, replacedRange: range) }
         settingsWindow.onChange = { [weak self] value in
             guard let self else { return }
-            let enablesVoiceIsolation = value.usesVoiceIsolation && !flow.settings.usesVoiceIsolation
+            let previous = flow.settings
             value.save(to: defaults)
             flow.apply(value)
-            if enablesVoiceIsolation { prepareVoiceIsolationIfEnabled() }
+            if previous.model != value.model { modelPreparation?.cancel(previous.model.rawValue) }
+            if !value.correctsText { modelPreparation?.cancel("correction") }
+            if !value.usesVoiceIsolation { modelPreparation?.cancel("voiceIsolation") }
+            prepareSelectedModels()
+            if value.usesVoiceIsolation && !previous.usesVoiceIsolation { prepareVoiceIsolationIfEnabled() }
             refreshVoiceEnrollment()
         }
+        settingsWindow.onRetryModel = { [weak self] model in self?.modelPreparation?.prepare(model, retry: true) }
+        modelPreparation?.onChange = { [weak self] model in self?.modelDownloadChanged(model) }
         settingsWindow.onRecordVoice = { [weak self] kind in
             guard let self else { return }
             guard flow.canStart else { enrollment.showNotice("请先结束听写，再录语音样本"); return }
@@ -213,8 +238,30 @@ import SpeechFoundation
         settingsWindow.updateVoiceEnrollment(enrollment, modelAvailable: voiceIsolator != nil)
     }
 
+    private func prepareSelectedModels() {
+        guard let modelPreparation else { return }
+        let settings = flow.settings
+        modelPreparation.prepare(settings.model.rawValue)
+        if settings.correctsText { modelPreparation.prepare("correction") }
+        if settings.usesVoiceIsolation, voiceIsolator != nil { modelPreparation.prepare("voiceIsolation") }
+        settingsWindow.updateModelDownloads(modelPreparation, settings: settings)
+    }
+
+    private func modelDownloadChanged(_ model: String) {
+        guard let modelPreparation else { return }
+        let settings = flow.settings
+        settingsWindow.updateModelDownloads(modelPreparation, settings: settings)
+        guard modelPreparation.status(for: model) == .ready else { return }
+        if model == settings.model.rawValue {
+            flow.showNotice("转写模型已就绪")
+            flow.prepareForFirstRecording()
+        }
+        if model == "voiceIsolation" { prepareVoiceIsolationIfEnabled() }
+    }
+
     private func prepareVoiceIsolationIfEnabled() {
-        guard flow.settings.usesVoiceIsolation, let voiceIsolator, voicePreparation == nil else { return }
+        guard flow.settings.usesVoiceIsolation, let voiceIsolator, voicePreparation == nil,
+              models.downloads?.isInstalled("voiceIsolation") != false else { return }
         voicePreparation = Task(priority: .utility) { [weak self] in
             await voiceIsolator.prepare()
             self?.voicePreparation = nil
