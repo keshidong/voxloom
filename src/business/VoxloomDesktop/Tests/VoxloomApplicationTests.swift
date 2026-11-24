@@ -682,16 +682,20 @@ import Testing
         let rootView = try #require(app.overlay.panel.contentView)
         try #require(findButton(labeled: "稍后", in: rootView)).performClick(nil)
         try #require(findButton(labeled: "展开草稿", in: rootView)).performClick(nil)
-        app.flow.handle(.start)
-        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
-        while capture.receive == nil && ContinuousClock.now < deadline { await Task.yield() }
-        let receive = try #require(capture.receive)
-        receive([3000, -3000])
-        while app.flow.state?.live.samples.count != 2 && ContinuousClock.now < deadline { await Task.yield() }
-        try #require(app.flow.state?.live.samples.count == 2)
-        app.flow.handle(.interrupted)
-        while !app.flow.canInsert && ContinuousClock.now < deadline { await Task.yield() }
-        try #require(app.flow.canInsert)
+        func recordDraft() async throws {
+            app.flow.handle(.start)
+            let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+            while capture.receive == nil && ContinuousClock.now < deadline { await Task.yield() }
+            let receive = try #require(capture.receive)
+            receive([3000, -3000])
+            while app.flow.state?.live.samples.count != 2 && ContinuousClock.now < deadline { await Task.yield() }
+            try #require(app.flow.state?.live.samples.count == 2)
+            app.flow.handle(.interrupted)
+            while !app.flow.canInsert && ContinuousClock.now < deadline { await Task.yield() }
+            try #require(app.flow.canInsert)
+        }
+
+        try await recordDraft()
         #expect(app.overlay.editor.string == "示例草稿")
         #expect(app.overlay.editor.isEditable)
         try #require(findButton(labeled: "收起草稿", in: rootView)).performClick(nil)
@@ -713,6 +717,23 @@ import Testing
         #expect(app.flow.canStart)
         app.overlay.copy.performClick(nil)
         #expect(board.string(forType: .string) == "编辑后的草稿")
+        func escapeEvent(_ modifiers: NSEvent.ModifierFlags = [], repeated: Bool = false) throws -> NSEvent {
+            try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: modifiers,
+                timestamp: 0, windowNumber: editorWindow.windowNumber, context: nil,
+                characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}", isARepeat: repeated,
+                keyCode: UInt16(kVK_Escape)))
+        }
+        let fnEscape = try escapeEvent(.function)
+        let repeatedEscape = try escapeEvent(repeated: true)
+        #expect(!app.overlay.editor.handleDraftShortcut(fnEscape))
+        #expect(!app.overlay.editor.handleDraftShortcut(repeatedEscape))
+        #expect(app.flow.state?.text == "编辑后的草稿")
+        app.overlay.editor.keyDown(with: try escapeEvent())
+        #expect(app.overlay.editor.string.isEmpty)
+        #expect(app.flow.state?.text == "")
+        #expect(editorWindow.isVisible)
+        try await recordDraft()
+        #expect(app.overlay.editor.string == "示例草稿")
         app.overlay.clear.performClick(nil)
         #expect(app.overlay.editor.string.isEmpty)
         let hide = try #require(findButton(labeled: "隐藏悬浮窗口", in: rootView))

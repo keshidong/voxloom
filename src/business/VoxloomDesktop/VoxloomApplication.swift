@@ -214,6 +214,11 @@ import SpeechFoundation
         flow.onChange = { [weak self] in self?.renderOverlay() }
         flow.onOpenDraft = { [weak overlay] in overlay?.showDraftEditor() }
         overlay.onEdit = { [weak flow] text, visible, range in flow?.edit(text, basedOn: visible, replacedRange: range) }
+        overlay.editor.onClearDraft = { [weak self] in
+            guard let self, flow.canStart, overlay.clear.isEnabled else { return false }
+            clearDraft()
+            return true
+        }
         settingsWindow.onChange = { [weak self] value in
             guard let self else { return }
             let previous = flow.settings
