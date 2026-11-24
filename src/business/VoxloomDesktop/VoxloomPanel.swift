@@ -383,8 +383,10 @@ enum VoiceBarSetup {
         status.textColor = phase == .recording ? .systemMint : .labelColor
         insert.isEnabled = flow.canInsert
         copy.isEnabled = available
-        clear.title = flow.canStart ? "清空" : "取消"
-        clear.isEnabled = available || !flow.canStart
+        let readyToClear = flow.canStart
+        clear.title = readyToClear ? "清空" : "取消"
+        clear.toolTip = readyToClear ? "Esc 清空草稿" : nil
+        clear.isEnabled = available || !readyToClear
     }
 
     private func renderSetup(_ setup: VoiceBarSetup?) -> String? {
@@ -467,16 +469,22 @@ enum VoiceBarSetup {
 
 @MainActor final class PanelEditor: NSTextView {
     var onSubmit: (() -> Bool)?
+    var onClearDraft: (() -> Bool)?
 
     override var needsPanelToBecomeKey: Bool { true }
 
     override func keyDown(with event: NSEvent) {
-        let key = Int(event.keyCode)
-        if (key == kVK_Return || key == kVK_ANSI_KeypadEnter),
-           event.modifierFlags.isDisjoint(with: [.shift, .control, .option, .command]),
-           !event.isARepeat, !hasMarkedText(), onSubmit?() == true {
-            return
+        if !handleDraftShortcut(event) { super.keyDown(with: event) }
+    }
+
+    func handleDraftShortcut(_ event: NSEvent) -> Bool {
+        guard !event.isARepeat,
+              event.modifierFlags.isDisjoint(with: [.shift, .control, .option, .command]),
+              !hasMarkedText() else { return false }
+        switch Int(event.keyCode) {
+        case kVK_Return, kVK_ANSI_KeypadEnter: return onSubmit?() == true
+        case kVK_Escape where !event.modifierFlags.contains(.function): return onClearDraft?() == true
+        default: return false
         }
-        super.keyDown(with: event)
     }
 }

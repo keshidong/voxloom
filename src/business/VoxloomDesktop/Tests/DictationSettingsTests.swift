@@ -27,11 +27,9 @@ struct DictationSettingsTests {
         #expect(!DictationSettings().correctsText)
         #expect(!DictationSettings(defaults: defaults).correctsText)
 
-        defaults.set(["language": "zh", "inputContext": true], forKey: "dictation.settings")
+        defaults.set(["language": "zh"], forKey: "dictation.settings")
         var settings = DictationSettings(defaults: defaults)
         #expect(!settings.correctsText)
-        #expect(settings.usesInputContext)
-        #expect(!settings.usesConversationContext)
 
         settings.correctsText = true
         settings.save(to: defaults)
@@ -48,8 +46,6 @@ struct DictationSettingsTests {
         settings.language = .english
         settings.correctsText = false
         settings.usesGPU = false
-        settings.usesInputContext = false
-        settings.usesConversationContext = true
         settings.usesVoiceIsolation = true
         settings.vocabulary = "Core Audio"
         settings.save(to: defaults)

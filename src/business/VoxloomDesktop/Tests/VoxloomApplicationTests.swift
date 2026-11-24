@@ -7,6 +7,41 @@ import Testing
 @testable import VoxloomDesktop
 
 @MainActor @Suite(.serialized) struct VoxloomApplicationTests {
+    @Test func settingsRecordsTheCompleteShortcutAndCanRestoreFn() throws {
+        let app = NSApplication.shared
+        let settings = SettingsWindow(settings: .init())
+        let original = try #require(settings.window)
+        let content = try #require(original.contentView)
+        let window = ShortcutCaptureTestWindow(contentRect: original.frame, styleMask: .titled,
+                                               backing: .buffered, defer: false)
+        // Drive the local event monitor without activating the test host.
+        original.contentView = nil
+        window.contentView = content
+        settings.window = window
+        defer {
+            settings.stopTriggerCapture()
+            window.orderOut(nil)
+        }
+        var selected: [DictationTrigger] = []
+        settings.onChange = { selected.append($0.trigger) }
+        try #require(findButton(labeled: "更改按住说话键", in: content)).performClick(nil)
+
+        func send(_ type: NSEvent.EventType, key: Int, modifiers: NSEvent.ModifierFlags) throws {
+            let event = try #require(NSEvent.keyEvent(with: type, location: .zero, modifierFlags: modifiers,
+                timestamp: 0, windowNumber: window.windowNumber, context: nil, characters: "", charactersIgnoringModifiers: "",
+                isARepeat: false, keyCode: UInt16(key)))
+            app.sendEvent(event)
+        }
+
+        try send(.flagsChanged, key: kVK_Command, modifiers: .command)
+        try send(.flagsChanged, key: kVK_Shift, modifiers: [.command, .shift])
+        #expect(selected.isEmpty)
+        try send(.keyDown, key: kVK_Space, modifiers: [.command, .shift])
+        #expect(selected.map(\.name) == ["⇧⌘空格"])
+        try #require(findButton(labeled: "恢复 Fn", in: content)).performClick(nil)
+        #expect(selected.last == .fn)
+    }
+
     @Test func showingTheVoiceBarRestoresItAboveTheDock() throws {
         _ = NSApplication.shared
         let screen = try #require(NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? NSScreen.main)
@@ -85,6 +120,8 @@ import Testing
         defer { defaults.removePersistentDomain(forName: suite) }
         let gate = AsyncStream<Void>.makeStream()
         let started = AsyncStream<Void>.makeStream()
+        let optionalGate = AsyncStream<Void>.makeStream()
+        let optionalStart = OptionalModelStart()
         var microphone = MicrophoneCapture.Authorization.notDetermined
         var microphoneRequests = 0
         var accessibilityGranted = false
@@ -107,6 +144,10 @@ import Testing
                     started.continuation.yield(())
                     var permit = gate.stream.makeAsyncIterator()
                     _ = await permit.next()
+                } else {
+                    await optionalStart.record(asrReady: downloads.isInstalled("qwen"))
+                    var permit = optionalGate.stream.makeAsyncIterator()
+                    _ = await permit.next()
                 }
                 let file = directory.appending(path: url.lastPathComponent)
                 try Data("ok".utf8).write(to: file)
@@ -116,6 +157,7 @@ import Testing
         defer {
             gate.continuation.finish()
             started.continuation.finish()
+            optionalGate.continuation.finish()
             app.settingsWindow.window?.orderOut(nil)
             app.overlay.panel.orderOut(nil)
         }
@@ -123,6 +165,7 @@ import Testing
         #expect(app.settingsWindow.window?.isVisible == false)
         var transfer = started.stream.makeAsyncIterator()
         _ = await transfer.next()
+        #expect(await optionalStart.asrReady == nil)
         #expect(microphoneRequests == 0)
         #expect(!app.overlay.enableAccessibility.isHiddenOrHasHiddenAncestor)
         #expect(app.overlay.enableMicrophone.isHiddenOrHasHiddenAncestor)
@@ -163,17 +206,20 @@ import Testing
         let deadline = ContinuousClock.now.advanced(by: .seconds(3))
         while await engine.prepares == 0 && ContinuousClock.now < deadline { await Task.yield() }
         #expect(await engine.prepares == 1)
+        #expect(await optionalStart.asrReady == nil)
         #expect(app.overlay.downloadProgress.isHiddenOrHasHiddenAncestor)
         app.flow.handle(.start)
         while capture.receive == nil && ContinuousClock.now < deadline { await Task.yield() }
         #expect(capture.receive != nil)
         #expect(!downloads.isInstalled("correction"))
-        let correction = app.settingsWindow.correction
-        correction.selectItem(at: 0)
-        correction.sendAction(correction.action, to: correction.target)
-        let optionalDeadline = ContinuousClock.now.advanced(by: .seconds(3))
-        while !downloads.isInstalled("correction") && ContinuousClock.now < optionalDeadline { await Task.yield() }
-        #expect(downloads.isInstalled("correction"))
+        capture.receive?([3000, -3000])
+        while app.flow.state?.live.samples.count != 2 && ContinuousClock.now < deadline { await Task.yield() }
+        app.flow.handle(.stop)
+        while !app.flow.canStart && ContinuousClock.now < deadline { await Task.yield() }
+        #expect(app.flow.state?.text == "第一段")
+        #expect(!app.flow.settings.correctsText)
+        #expect(!downloads.isInstalled("correction"))
+        #expect(await optionalStart.asrReady == nil)
         await app.stop()
     }
 
@@ -482,6 +528,101 @@ import Testing
         await app.stop()
     }
 
+    @Test func correctionModelDownloadsOnlyWhenCorrectionIsEnabled() async throws {
+        _ = NSApplication.shared
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let manifest = """
+        {"qwen":[{"path":"weights","url":"https://example.com/required",
+        "sha256":"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df","bytes":2}],
+        "correction":[{"path":"Qwen3-4B-Instruct-2507-Q4_K_M.gguf","url":"https://example.com/optional",
+        "sha256":"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df","bytes":2}]}
+        """
+        try Data(manifest.utf8).write(to: root.appending(path: "model-downloads.json"))
+        let domain = UUID().uuidString
+        let defaults = try #require(UserDefaults(suiteName: domain))
+        defer { defaults.removePersistentDomain(forName: domain) }
+        let directory = root.appending(path: "models")
+        let models = LocalModels(root: root, downloadDirectory: directory)
+        let downloads = try #require(models.downloads)
+        let requiredGate = AsyncStream<Void>.makeStream()
+        let optionalGate = AsyncStream<Void>.makeStream()
+        let transfer = OptionalModelStart()
+        let capture = FlowCapture()
+        let recognizer = PrewarmTestRecognizer()
+        let app = VoxloomCoordinator(root: root, defaults: defaults, recognizer: { _ in recognizer },
+            capture: { capture }, insertion: .init(foregroundTarget: { nil }, canPost: { false }, paste: { _, _ in false }),
+            activate: {},
+            permissions: .init(isTrusted: { true }, canPostEvents: { true }, microphoneAuthorization: { .authorized }),
+            downloadDirectory: directory, downloadModel: { url, progress in
+                if url.lastPathComponent == "required" {
+                    await transfer.recordRequiredStart()
+                    for await _ in requiredGate.stream { break }
+                } else {
+                    await transfer.record(asrReady: downloads.isInstalled("qwen"))
+                    progress(1, 2)
+                    for await _ in optionalGate.stream { break }
+                }
+                let file = root.appending(path: url.lastPathComponent)
+                try Data("ok".utf8).write(to: file)
+                return file
+            })
+        app.connectViews()
+        defer {
+            requiredGate.continuation.finish()
+            optionalGate.continuation.finish()
+            app.overlay.panel.orderOut(nil)
+        }
+        let content = try #require(app.settingsWindow.window?.contentView)
+        #expect(!containsLabel("Qwen3-4B Instruct 等待下载", in: content))
+        let startupDeadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while await !transfer.requiredStarted && ContinuousClock.now < startupDeadline { await Task.yield() }
+        try #require(await transfer.requiredStarted)
+        #expect(await transfer.asrReady == nil)
+        requiredGate.continuation.finish()
+
+        let readyDeadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while await recognizer.prepares == 0 && ContinuousClock.now < readyDeadline { await Task.yield() }
+        try #require(await recognizer.prepares > 0)
+        #expect(await transfer.asrReady == nil)
+        #expect(!containsLabel("Qwen3-4B Instruct 下载中，请稍候", in: content))
+        #expect(!containsLabel("Qwen3-4B Instruct 下载中 50%", in: content))
+
+        let correction = app.settingsWindow.correction
+        correction.selectItem(at: 0)
+        let correctionAction = try #require(correction.action)
+        correction.sendAction(correctionAction, to: correction.target)
+
+        let optionalDeadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while !containsLabel("Qwen3-4B Instruct 下载中 50%", in: content) && ContinuousClock.now < optionalDeadline {
+            await Task.yield()
+        }
+        #expect(containsLabel("Qwen3-4B Instruct 下载中 50%", in: content))
+        #expect(await transfer.asrReady == true)
+        #expect(!downloads.isInstalled("correction"))
+        app.flow.handle(.start)
+        let recordDeadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while capture.receive == nil && ContinuousClock.now < recordDeadline { await Task.yield() }
+        try #require(capture.receive != nil)
+        capture.receive?([3000, -3000])
+        while app.flow.state?.live.samples.count != 2 && ContinuousClock.now < recordDeadline { await Task.yield() }
+        app.flow.handle(.stop)
+        while !app.flow.canStart && ContinuousClock.now < recordDeadline { await Task.yield() }
+        #expect(app.flow.state?.text == "第一段")
+        #expect(!downloads.isInstalled("correction"))
+
+        optionalGate.continuation.finish()
+        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while !containsLabel("Qwen3-4B Instruct 已就绪", in: content) && ContinuousClock.now < deadline { await Task.yield() }
+
+        let saved = DictationSettings(defaults: defaults)
+        #expect(saved.correctsText)
+        #expect(downloads.isInstalled("correction"))
+        #expect(containsLabel("Qwen3-4B Instruct 已就绪", in: content))
+        await app.stop()
+    }
+
     @Test func openingTheAppShowsModelSettingsAndOneAccessibilityAction() async throws {
         _ = NSApplication.shared
         let domain = UUID().uuidString
@@ -522,19 +663,6 @@ import Testing
         app.settingsWindow.vocabulary.stringValue = "Voxloom"
         app.settingsWindow.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification))
         #expect(DictationSettings(defaults: defaults).vocabulary == "Voxloom")
-        #expect(app.settingsWindow.inputContext.state == .on)
-        app.settingsWindow.inputContext.performClick(nil)
-        #expect(!DictationSettings(defaults: defaults).usesInputContext)
-        #expect(app.settingsWindow.conversationContext.state == .off)
-        app.settingsWindow.conversationContext.performClick(nil)
-        #expect(DictationSettings(defaults: defaults).usesConversationContext)
-        #expect(!DictationSettings(defaults: defaults).usesInputContext)
-        #if DEBUG
-        app.showContextLog()
-        let logWindow = try #require(NSApp.windows.first { $0.title == "ASR 上下文日志" })
-        #expect(logWindow.isVisible)
-        logWindow.orderOut(nil)
-        #endif
         let settingsAction = try #require(findButton(labeled: "启用辅助功能", in: settingsContent))
         settingsAction.performClick(nil)
         #expect(accessibilityRequests == 2)
@@ -577,16 +705,20 @@ import Testing
         let rootView = try #require(app.overlay.panel.contentView)
         try #require(findButton(labeled: "稍后", in: rootView)).performClick(nil)
         try #require(findButton(labeled: "展开草稿", in: rootView)).performClick(nil)
-        app.flow.handle(.start)
-        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
-        while capture.receive == nil && ContinuousClock.now < deadline { await Task.yield() }
-        let receive = try #require(capture.receive)
-        receive([3000, -3000])
-        while app.flow.state?.live.samples.count != 2 && ContinuousClock.now < deadline { await Task.yield() }
-        try #require(app.flow.state?.live.samples.count == 2)
-        app.flow.handle(.interrupted)
-        while !app.flow.canInsert && ContinuousClock.now < deadline { await Task.yield() }
-        try #require(app.flow.canInsert)
+        func recordDraft() async throws {
+            app.flow.handle(.start)
+            let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+            while capture.receive == nil && ContinuousClock.now < deadline { await Task.yield() }
+            let receive = try #require(capture.receive)
+            receive([3000, -3000])
+            while app.flow.state?.live.samples.count != 2 && ContinuousClock.now < deadline { await Task.yield() }
+            try #require(app.flow.state?.live.samples.count == 2)
+            app.flow.handle(.interrupted)
+            while !app.flow.canInsert && ContinuousClock.now < deadline { await Task.yield() }
+            try #require(app.flow.canInsert)
+        }
+
+        try await recordDraft()
         #expect(app.overlay.editor.string == "示例草稿")
         #expect(app.overlay.editor.isEditable)
         try #require(findButton(labeled: "收起草稿", in: rootView)).performClick(nil)
@@ -608,6 +740,23 @@ import Testing
         #expect(app.flow.canStart)
         app.overlay.copy.performClick(nil)
         #expect(board.string(forType: .string) == "编辑后的草稿")
+        func escapeEvent(_ modifiers: NSEvent.ModifierFlags = [], repeated: Bool = false) throws -> NSEvent {
+            try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: modifiers,
+                timestamp: 0, windowNumber: editorWindow.windowNumber, context: nil,
+                characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}", isARepeat: repeated,
+                keyCode: UInt16(kVK_Escape)))
+        }
+        let fnEscape = try escapeEvent(.function)
+        let repeatedEscape = try escapeEvent(repeated: true)
+        #expect(!app.overlay.editor.handleDraftShortcut(fnEscape))
+        #expect(!app.overlay.editor.handleDraftShortcut(repeatedEscape))
+        #expect(app.flow.state?.text == "编辑后的草稿")
+        app.overlay.editor.keyDown(with: try escapeEvent())
+        #expect(app.overlay.editor.string.isEmpty)
+        #expect(app.flow.state?.text == "")
+        #expect(editorWindow.isVisible)
+        try await recordDraft()
+        #expect(app.overlay.editor.string == "示例草稿")
         app.overlay.clear.performClick(nil)
         #expect(app.overlay.editor.string.isEmpty)
         let hide = try #require(findButton(labeled: "隐藏悬浮窗口", in: rootView))
@@ -623,9 +772,19 @@ import Testing
 
 }
 
+@MainActor private final class ShortcutCaptureTestWindow: NSWindow {
+    override var isKeyWindow: Bool { true }
+}
+
 @MainActor private func findButton(labeled label: String, in view: NSView) -> NSButton? {
     if let button = view as? NSButton, button.accessibilityLabel() == label || button.title == label { return button }
     return view.subviews.lazy.compactMap { findButton(labeled: label, in: $0) }.first
+}
+
+@MainActor private func containsLabel(_ value: String, in view: NSView) -> Bool {
+    guard !view.isHidden else { return false }
+    if let label = view as? NSTextField, label.stringValue == value { return true }
+    return view.subviews.contains { containsLabel(value, in: $0) }
 }
 
 private struct SampleRecognizer: SpeechRecognizer {
@@ -648,4 +807,11 @@ private actor PrewarmTestRecognizer: SpeechRecognizer {
     func transcribe(_ audio: AudioClip, options: RecognitionOptions) async throws -> Transcript {
         .init(text: "第一段")
     }
+}
+
+private actor OptionalModelStart {
+    private(set) var requiredStarted = false
+    private(set) var asrReady: Bool?
+    func recordRequiredStart() { requiredStarted = true }
+    func record(asrReady: Bool) { self.asrReady = asrReady }
 }

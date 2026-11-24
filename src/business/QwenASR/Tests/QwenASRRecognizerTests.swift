@@ -3,6 +3,10 @@ import SpeechFoundation
 @testable import SpeechInput
 import Testing
 
+private let audibleTestSamples = (0..<(AudioClip.sampleRate / 10)).map { index in
+    Int16(128 * sin(Double(index) * 2 * .pi * 220 / Double(AudioClip.sampleRate)))
+}
+
 private final class ASRBoundary: JSONWorkerRunning, @unchecked Sendable {
     let lock = NSLock()
     var calls = 0
@@ -13,7 +17,7 @@ private final class ASRBoundary: JSONWorkerRunning, @unchecked Sendable {
         #expect(request["context"] == "图书卡 预付费 USD")
         #expect(request["language"] == "zh")
         let audio = try Data(contentsOf: URL(fileURLWithPath: request["audio"]!))
-        #expect(try WAVCodec.decode(audio).samples == [1, -1])
+        #expect(try WAVCodec.decode(audio).samples == audibleTestSamples)
         lock.withLock { calls += 1 }
         return Data(#"{"text":"图书卡额度采用预付费模式","language":"zh"}"#.utf8)
     }
@@ -34,7 +38,7 @@ struct QwenASRRecognizerTests {
         await provider.prepare()
         #expect(boundary.preparations == 1)
         #expect(boundary.calls == 0)
-        let result = try await provider.transcribe(AudioClip(samples: [1, -1]),
+        let result = try await provider.transcribe(AudioClip(samples: audibleTestSamples),
             options: .init(language: .chinese, context: "图书卡 预付费 USD"))
         #expect(result.text == "图书卡额度采用预付费模式")
         #expect(boundary.calls == 1)
@@ -50,7 +54,7 @@ struct QwenASRRecognizerTests {
         try FileManager.default.createDirectory(at: model, withIntermediateDirectories: true)
         try Data().write(to: model.appendingPathComponent("model.safetensors"))
         let exe = URL(fileURLWithPath: "/usr/bin/true")
-        let audio = try AudioClip(samples: [1])
+        let audio = try AudioClip(samples: audibleTestSamples)
         for (config, expected) in [
             (QwenASRConfiguration(executable: exe, model: model, timeout: .zero), RecognitionError.invalidConfiguration),
             (.init(executable: URL(fileURLWithPath: "/missing"), model: model), .engineUnavailable),
@@ -76,6 +80,20 @@ struct QwenASRRecognizerTests {
         let result = try await provider.transcribe(AudioClip(samples: Array(repeating: 0, count: 16_000)), options: .init())
         #expect(result.text.isEmpty)
     }
+
+    @Test(arguments: [false, true])
+    func lowLevelNoiseAndBriefClicksReturnNoTranscript(withClick: Bool) async throws {
+        var samples = (0..<AudioClip.sampleRate).map { Int16($0 * 73 % 61 - 30) }
+        if withClick {
+            for index in 6960..<7040 { samples[index] = index.isMultiple(of: 2) ? 12_000 : -12_000 }
+        }
+        let provider = QwenASRRecognizer(configuration: .init(executable: URL(fileURLWithPath: "/missing"),
+                                                               model: URL(fileURLWithPath: "/missing-model")))
+        let result = try await provider.transcribe(AudioClip(samples: samples),
+            options: .init(language: .chinese, context: "图书卡 预付费 USD"))
+        #expect(result.text.isEmpty)
+    }
+
     @Test func commonInterfacePassesLanguageAndContextToAResidentWorker() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -87,7 +105,7 @@ struct QwenASRRecognizerTests {
         let provider: any SpeechRecognizer = QwenASRRecognizer(configuration: .init(executable: URL(fileURLWithPath: "/usr/bin/true"), model: model),
             temporaryDirectory: root, factory: { boundary })
         for _ in 0..<2 {
-            let result = try await provider.transcribe(AudioClip(samples: [1, -1]), options: .init(language: .chinese, context: "图书卡 预付费 USD"))
+            let result = try await provider.transcribe(AudioClip(samples: audibleTestSamples), options: .init(language: .chinese, context: "图书卡 预付费 USD"))
             #expect(result.text == "图书卡额度采用预付费模式")
         }
         #expect(boundary.calls == 2)

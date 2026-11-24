@@ -27,7 +27,7 @@ public struct DictationState: Sendable, Equatable {
     private let output: BehaviorSubject<DictationState>
     private let scheduler: any SchedulerType
     private let existingText: String
-    private let inputContext: DictationInputContext?
+    private let recognitionPromptByteLimit: Int?
     private let bag = DisposeBag()
     private let correctionObservation = SerialDisposable()
     private let finalCorrectionTimer = SerialDisposable()
@@ -38,23 +38,13 @@ public struct DictationState: Sendable, Equatable {
     private var cancellingRecording: Int?
     private var automaticInsertion: AutomaticInsertion?
 
-    public convenience init(live: LiveSpeechSession, existingText: String = "",
-                            correctionScheduler: any SchedulerType = MainScheduler.instance,
-                            readInputContext: (@Sendable () async -> String)? = nil) {
-        self.init(live: live, existingText: existingText, correctionScheduler: correctionScheduler,
-                  readContext: readInputContext.map { read in { @Sendable in .init(draft: await read()) } })
-    }
-
     public init(live: LiveSpeechSession, existingText: String = "",
                 correctionScheduler: any SchedulerType = MainScheduler.instance,
-                readContext: (@Sendable () async -> DictationContextSnapshot)?,
                 recognitionPromptByteLimit: Int? = nil) {
         self.live = live
         scheduler = correctionScheduler
         self.existingText = existingText
-        inputContext = if readContext != nil || recognitionPromptByteLimit != nil {
-            DictationInputContext(read: readContext, promptByteLimit: recognitionPromptByteLimit)
-        } else { nil }
+        self.recognitionPromptByteLimit = recognitionPromptByteLimit
         let initial = DictationState(text: existingText)
         state = initial
         output = BehaviorSubject(value: initial)
@@ -67,7 +57,23 @@ public struct DictationState: Sendable, Equatable {
     public func start(recognizer: any SpeechRecognizer, options: RecognitionOptions = .init()) {
         guard state.phase == .editing else { return }
         vocabulary = options.context
-        live.start(recognizer: inputContext?.recognizer(recognizer) ?? recognizer, options: options)
+        let recognitionOptions = recognitionPromptByteLimit.map { limit in
+            RecognitionOptions(language: options.language, context: Self.boundedVocabulary(options.context, byteLimit: limit))
+        } ?? options
+        live.start(recognizer: recognizer, options: recognitionOptions)
+    }
+
+    private static func boundedVocabulary(_ text: String, byteLimit: Int) -> String {
+        let words = text.replacingOccurrences(of: "\0", with: "").split(whereSeparator: \.isWhitespace)
+        var vocabulary: [Substring] = []
+        var remaining = byteLimit
+        for word in words {
+            let bytes = word.utf8.count + (vocabulary.isEmpty ? 0 : 1)
+            guard bytes <= remaining else { break }
+            vocabulary.append(word)
+            remaining -= bytes
+        }
+        return vocabulary.joined(separator: " ")
     }
 
     public func stop() { live.stop() }
@@ -97,7 +103,7 @@ public struct DictationState: Sendable, Equatable {
         correction = nil
         state.correction = .idle
         if let corrector, state.phase == .editing {
-            let next = CorrectionSession(corrector: inputContext?.corrector(corrector) ?? corrector, scheduler: scheduler)
+            let next = CorrectionSession(corrector: corrector, scheduler: scheduler)
             correction = next
             correctionObservation.disposable = next.states.subscribe(onNext: { [weak self] in self?.receive($0) })
             if inputRevision > 0 { scheduleCorrection() }
@@ -138,7 +144,6 @@ public struct DictationState: Sendable, Equatable {
         guard !existingText.isEmpty else { cancel(); return }
         guard cancellingRecording == nil else { return }
         cancellingRecording = state.live.session
-        inputContext?.cancel()
         resetAutomaticInsertion()
         correction?.cancel()
         state.phase = .editing
@@ -162,7 +167,6 @@ public struct DictationState: Sendable, Equatable {
     }
 
     private func discard() {
-        inputContext?.cancel()
         cancellingRecording = nil
         resetAutomaticInsertion()
         state.phase = .discarded

@@ -50,9 +50,7 @@ public actor QwenASRRecognizer: SpeechRecognizer {
         try Task.checkCancellation()
         guard !busy else { throw RecognitionError.busy }
         guard !audio.samples.isEmpty else { throw RecognitionError.emptyAudio }
-        // Digital silence has no linguistic content. Do not ask a generative
-        // decoder to invent a transcript for it; quiet speech is preserved.
-        if audio.samples.allSatisfy({ $0 == 0 }) { return Transcript(text: "") }
+        guard Self.containsSustainedAudio(audio.samples) else { return Transcript(text: "") }
         guard options.context.utf8.count <= 4096 else { throw RecognitionError.invalidConfiguration }
         try validateResources()
         busy = true
@@ -94,6 +92,28 @@ public actor QwenASRRecognizer: SpeechRecognizer {
         await preparation?.value
         await worker?.shutdown()
         worker = nil
+    }
+
+    private static func containsSustainedAudio(_ samples: [Int16]) -> Bool {
+        let frameSize = AudioClip.sampleRate / 50  // 20 ms
+        let minimumRMS = 32_768.0 * 0.001  // −60 dBFS, below the live recording threshold
+        let minimumPower = minimumRMS * minimumRMS
+        var activeFrames = 0
+        for start in stride(from: 0, through: samples.count - frameSize, by: frameSize) {
+            var sum = 0.0
+            var sumOfSquares = 0.0
+            for sample in samples[start..<(start + frameSize)] {
+                let value = Double(sample)
+                sum += value
+                sumOfSquares += value * value
+            }
+            // Subtract the DC component so a constant input offset cannot activate recognition.
+            let mean = sum / Double(frameSize)
+            let power = sumOfSquares / Double(frameSize) - mean * mean
+            activeFrames = power >= minimumPower ? activeFrames + 1 : 0
+            if activeFrames == 3 { return true }
+        }
+        return false
     }
 
     private func validateResources() throws {
