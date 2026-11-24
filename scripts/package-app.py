@@ -4,6 +4,7 @@ from pathlib import Path
 import argparse
 import os
 import plistlib
+import re
 import shutil
 import subprocess
 
@@ -17,11 +18,17 @@ def main():
     parser.add_argument("-c", "--configuration", choices=("debug", "release"), default="release")
     parser.add_argument("--output")
     parser.add_argument("--bundle-id")
+    parser.add_argument("--version", help="App version in major.minor.patch form")
+    parser.add_argument("--build-number", help="Positive integer identifying this build")
     parser.add_argument("--external-models", action="store_true",
                         help="Include the model download catalog and omit model weights from Voxloom")
     parser.add_argument("--voice-isolation", action="store_true",
                         help="Include the prepared offline voice isolation runtime in Voxloom")
     arguments = parser.parse_args()
+    if arguments.version is not None and not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", arguments.version):
+        parser.error("--version must contain three numeric components")
+    if arguments.build_number is not None and not re.fullmatch(r"[1-9][0-9]*", arguments.build_number):
+        parser.error("--build-number must be a positive integer")
     standalone = arguments.product == "voxloom"
     if arguments.external_models and not standalone:
         parser.error("--external-models requires --product voxloom")
@@ -118,8 +125,8 @@ def main():
     info = {
         "CFBundleName": app.stem, "CFBundleDisplayName": app.stem,
         "CFBundleExecutable": arguments.product, "CFBundleIdentifier": bundle_id,
-        "CFBundlePackageType": "APPL", "CFBundleShortVersionString": "0.1.0" if standalone else "0.3.2",
-        "CFBundleVersion": "1" if standalone else "5",
+        "CFBundlePackageType": "APPL", "CFBundleShortVersionString": arguments.version or ("0.1.0" if standalone else "0.3.2"),
+        "CFBundleVersion": arguments.build_number or ("1" if standalone else "5"),
         "LSMinimumSystemVersion": "14.0", "NSHighResolutionCapable": True,
         "NSMicrophoneUsageDescription": "点击开始录音后，使用麦克风进行本机离线语音转写。音频不会上传。",
     }

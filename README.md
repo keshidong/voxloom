@@ -90,7 +90,9 @@ Qwen 开发资源由 `scripts/prepare-qwen.py` 安装，固定模型 revision、
 
 ### 打包 macOS DMG
 
-推送 `v*` 版本标签时，GitHub Actions 自动构建 Apple Silicon 的 Release DMG 并上传到对应的 **Releases** 页面。也可以在 **Actions → Package Voxloom DMG → Run workflow** 手动打 Release 或 Debug 包，构建产物在 **Artifacts** 最多保留 90 天。
+PR 合并到 `main` 后，GitHub Actions 自动递增补丁版本号，例如 `v0.1.0` → `v0.1.1`，为合并后的提交创建标签，再构建 Apple Silicon 的 Release DMG 并发布到 **Releases → Assets**。同一提交重跑时沿用已有标签。
+
+也可以在 **Actions → Package Voxloom DMG → Run workflow** 手动打 Release 或 Debug 包。手动打包的产物在 **Artifacts** 最多保留 90 天。
 
 DMG 包含 App、推理运行时和 `Applications` 安装快捷方式。ASR 模型通过 SHA-256 校验后即可听写。开启纠错或人声分离时下载对应的可选模型。设置可查看各模型的下载状态并重试。模型存储在 `~/Library/Application Support/dev.voxloom.app/Models`，后续升级可复用相同版本的模型。
 

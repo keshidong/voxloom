@@ -91,7 +91,9 @@ The [0.3.2 verification summary](docs/reports/0.3.2/README.md) and the [first Wh
 
 ### Package a macOS DMG
 
-Pushing a `v*` version tag builds a Release DMG for Apple Silicon and publishes it on the corresponding **Releases** page. Use **Actions → Package Voxloom DMG → Run workflow** to select a Release or Debug build manually. Workflow artifacts are retained for up to 90 days.
+When a pull request merges into `main`, GitHub Actions increments the patch version, tags the merged commit, and publishes the Apple Silicon Release DMG under **Releases → Assets**. For example, the release after `v0.1.0` is `v0.1.1`. Rerunning the workflow for the same commit reuses its tag.
+
+Use **Actions → Package Voxloom DMG → Run workflow** to select a Release or Debug build manually. Manual builds are available under **Artifacts** for up to 90 days.
 
 The DMG includes the app, inference runtimes, and an `Applications` shortcut. Dictation is available once the selected ASR model passes SHA-256 verification. The correction and voice isolation models download when enabled. Check download status and retry failed downloads in Settings. Models in `~/Library/Application Support/dev.voxloom.app/Models` are reused across upgrades that require the same model versions.
 

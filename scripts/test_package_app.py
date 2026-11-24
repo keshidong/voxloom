@@ -35,6 +35,7 @@ class AppBundlePackagingTest(unittest.TestCase):
             main = runpy.run_path(str(SCRIPT))["main"]
             with patch.dict(main.__globals__, ROOT=root), patch.object(sys, "argv", [
                 str(SCRIPT), "--external-models", "--output", "Staged.app",
+                "--version", "0.1.2", "--build-number", "14",
             ]), patch.object(subprocess, "run"):
                 main()
 
@@ -44,6 +45,8 @@ class AppBundlePackagingTest(unittest.TestCase):
             self.assertEqual(info["CFBundleIdentifier"], "dev.voxloom.app")
             self.assertEqual(info["CFBundleDisplayName"], "Voxloom")
             self.assertEqual(info["CFBundleDevelopmentRegion"], "en")
+            self.assertEqual(info["CFBundleShortVersionString"], "0.1.2")
+            self.assertEqual(info["CFBundleVersion"], "14")
             self.assertTrue((contents / "Resources" / info["CFBundleIconFile"]).is_file())
             self.assertTrue((contents / "Resources/MenuBarIcon.svg").is_file())
 
