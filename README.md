@@ -105,7 +105,7 @@ Qwen 安装脚本为 `scripts/prepare-qwen.py`，固定模型 revision、SHA256 
 
 ### 打包 macOS DMG
 
-推送 `v*` 版本标签时，GitHub Actions 自动构建 Apple Silicon 的 Release DMG。工作流合入默认分支后，也可以在 **Actions → Package Voxloom DMG → Run workflow** 手动选择 Release 或 Debug。构建完成后登录 GitHub，在该次运行的 **Artifacts** 下载 DMG，文件保留 7 天。DMG 内含离线模型、声纹分离运行时和 `Applications` 安装快捷方式。App 使用 ad-hoc 签名，未经 Apple 公证。
+推送 `v*` 版本标签时，GitHub Actions 自动构建 Apple Silicon 的 Release DMG。也可以在 **Actions → Package Voxloom DMG → Run workflow** 手动选择 Release 或 Debug。构建完成后登录 GitHub，在该次运行的 **Artifacts** 下载 DMG，文件最多保留 90 天。DMG 内含离线模型、声纹分离运行时和 `Applications` 安装快捷方式。App 使用 ad-hoc 签名，未经 Apple 公证。
 
 在本机打包 Release DMG：
 

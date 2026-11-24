@@ -59,4 +59,4 @@ jobs:
           archive: false
           if-no-files-found: error
           overwrite: true
-          retention-days: 7
+          retention-days: 90

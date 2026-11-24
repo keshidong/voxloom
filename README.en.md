@@ -106,7 +106,7 @@ The [0.3.2 verification summary](docs/reports/0.3.2/README.md) and the [first Wh
 
 ### Package a macOS DMG
 
-Pushing a `v*` version tag triggers a Release build for Apple Silicon. Once the workflow is on the default branch, use **Actions → Package Voxloom DMG → Run workflow** to select a Release or Debug build manually. Sign in to GitHub and download the DMG from the run's **Artifacts** section within seven days. The DMG includes the offline models, voice isolation runtime, and an `Applications` shortcut. The app is signed ad hoc and has no Apple notarization.
+Pushing a `v*` version tag triggers a Release build for Apple Silicon. Use **Actions → Package Voxloom DMG → Run workflow** to select a Release or Debug build manually. Sign in to GitHub and download the DMG from the run's **Artifacts** section. The DMG is retained for up to 90 days and includes the offline models, voice isolation runtime, and an `Applications` shortcut. The app is signed ad hoc and has no Apple notarization.
 
 To build the Release DMG locally, run the following commands.
 
