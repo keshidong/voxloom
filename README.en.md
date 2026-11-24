@@ -103,3 +103,15 @@ python3 scripts/smoke-whisper.py              # Run the Whisper API and CLI end-
 `scripts/prepare-qwen.py` installs the pinned Qwen revisions and dependencies and checks SHA-256 hashes. Resources go in `.runtime/` and `models/` without sudo. In offline mode, audio and text stay on the device and recognition and correction use the installed resources. The app is signed ad hoc for local use. The `voice-input` CLI also supports Whisper file transcription.
 
 The [0.3.2 verification summary](docs/reports/0.3.2/README.md) and the [first Whisper acceptance report](docs/acceptance-01.md) document the test results. Complete local logs go in `.build/reports/`. Real-model end-to-end tests are outside the unit and module coverage figures. See the [third-party resources](docs/third-party.md) for model and dependency sources.
+
+### Package a macOS DMG
+
+Pushing a `v*` version tag triggers a Release build for Apple Silicon. Once the workflow is on the default branch, use **Actions → Package Voxloom DMG → Run workflow** to select a Release or Debug build manually. Sign in to GitHub and download the DMG from the run's **Artifacts** section within seven days. The DMG includes the offline models, voice isolation runtime, and an `Applications` shortcut. The app is signed ad hoc and has no Apple notarization.
+
+To build the Release DMG locally, run the following commands.
+
+```bash
+bash scripts/prepare-demo.sh --prepare-only
+python3 scripts/prepare-voice-isolation.py
+python3 scripts/make-dmg.py --voice-isolation --output .build/distribution/Voxloom-release-arm64.dmg
+```

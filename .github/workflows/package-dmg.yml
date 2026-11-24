@@ -1,0 +1,62 @@
+name: Package Voxloom DMG
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      configuration:
+        description: Build configuration
+        type: choice
+        options:
+          - release
+          - debug
+        default: release
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      CONFIGURATION: ${{ inputs.configuration || 'release' }}
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+      UV_NO_CACHE: 'true'
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check build environment
+        run: |
+          test "$(uname -m)" = arm64
+          xcodebuild -version
+          df -h .
+
+      - name: Test packaging scripts
+        run: python3 -m unittest discover -s scripts -p 'test_*.py'
+
+      - name: Prepare offline models and runtimes
+        run: |
+          bash scripts/prepare-demo.sh --prepare-only
+          python3 scripts/prepare-voice-isolation.py
+
+      - name: Build and verify DMG
+        run: |
+          python3 scripts/make-dmg.py --configuration "$CONFIGURATION" --voice-isolation \
+            --output "$RUNNER_TEMP/Voxloom-${CONFIGURATION}-arm64.dmg"
+
+      - name: Upload DMG
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          path: ${{ runner.temp }}/Voxloom-${{ env.CONFIGURATION }}-arm64.dmg
+          archive: false
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 7

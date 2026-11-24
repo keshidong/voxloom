@@ -1,5 +1,9 @@
 #!/bin/bash
 set -euo pipefail
+if [ "$#" -gt 1 ] || { [ "$#" -eq 1 ] && [ "$1" != "--prepare-only" ]; }; then
+    echo "Usage: $0 [--prepare-only]" >&2
+    exit 2
+fi
 project_root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$project_root"
 bash scripts/prepare-rx.sh
@@ -12,4 +16,6 @@ if [ ! -f "$sample_path" ] || [ "$(shasum -a 256 "$sample_path" | cut -d ' ' -f 
     mv "$sample_path.part" "$sample_path"
 fi
 python3 scripts/prepare-qwen.py
-python3 scripts/make-demo.py
+if [ "$#" -eq 0 ]; then
+    python3 scripts/make-demo.py
+fi
