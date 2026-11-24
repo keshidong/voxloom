@@ -20,9 +20,7 @@ class DiskImagePackagingTest(unittest.TestCase):
 
             def run_command(command, **kwargs):
                 if command[0] == sys.executable:
-                    self.assertEqual(command[1:6], [
-                        "scripts/make-demo.py", "--product", "voxloom", "--configuration", "debug",
-                    ])
+                    self.assertEqual(command[1:4], ["scripts/package-app.py", "--configuration", "debug"])
                     app = Path(command[command.index("--output") + 1])
                     self.assertEqual(app.name, app_name)
                     self.assertIn("--voice-isolation", command)

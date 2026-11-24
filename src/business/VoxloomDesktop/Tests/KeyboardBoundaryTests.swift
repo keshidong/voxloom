@@ -1,11 +1,92 @@
 import AppKit
 import Carbon
+import IOKit.hidsystem
 import RxSwift
 import SpeechFoundation
 import Testing
 @testable import VoxloomDesktop
 
 @MainActor struct KeyboardBoundaryTests {
+    @Test func chosenFunctionKeyIsSavedAndConsumesAnUnmodifiedHoldAndRelease() throws {
+        _ = NSApplication.shared
+        let origin = Date(timeIntervalSince1970: 0)
+        let clock = HistoricalScheduler(initialClock: origin)
+        var actions: [FunctionKeyGesture.Action] = []
+        let input = DictationKeyInput(scheduler: clock, canConfirm: { false }, action: { actions.append($0) })
+        var filter: ((NSEvent) -> Bool)?
+        let monitor = DictationKeyMonitor(input: input, isTrusted: { true }, filterGlobal: { handler, _ in
+            filter = handler
+            return { filter = nil }
+        })
+        let press = try keyEvent(.keyDown, key: kVK_F6)
+        let release = try keyEvent(.keyUp, key: kVK_F6)
+        var settings = DictationSettings()
+        settings.trigger = try #require(DictationTrigger(capturing: press))
+        let domain = UUID().uuidString
+        let defaults = try #require(UserDefaults(suiteName: domain))
+        defer { defaults.removePersistentDomain(forName: domain) }
+        settings.save(to: defaults)
+        let restored = DictationSettings(defaults: defaults)
+        #expect(restored.trigger == settings.trigger)
+        #expect(restored.trigger.name == "F6")
+        monitor.setTrigger(restored.trigger)
+        monitor.start()
+        defer { monitor.stop() }
+        let deliver = try #require(filter)
+        #expect(!deliver(try keyEvent(.keyDown, key: kVK_F6, flags: .command)))
+        #expect(!deliver(release))
+        clock.advanceTo(origin.addingTimeInterval(0.2))
+        #expect(actions.isEmpty)
+        #expect(deliver(press))
+        clock.advanceTo(origin.addingTimeInterval(0.4))
+        #expect(actions == [.start])
+        #expect(deliver(try keyEvent(.keyDown, key: kVK_F6, repeated: true)))
+        #expect(deliver(release))
+        #expect(actions == [.start, .stop])
+    }
+
+    @Test func selectedRightOptionStartsAndStopsDictationWithoutUsingFnOrLeftOption() throws {
+        _ = NSApplication.shared
+        let initial = Date(timeIntervalSince1970: 0)
+        let clock = HistoricalScheduler(initialClock: initial)
+        var actions: [FunctionKeyGesture.Action] = []
+        var edited = false
+        let input = DictationKeyInput(scheduler: clock, canConfirm: { false },
+            recordingShortcut: { edited = $0 == .edit; return edited }, action: { actions.append($0) })
+        var filter: ((NSEvent) -> Bool)?
+        let monitor = DictationKeyMonitor(input: input, isTrusted: { true }, filterGlobal: { handler, _ in
+            filter = handler
+            return { filter = nil }
+        })
+        let left = NSEvent.ModifierFlags(rawValue: UInt(NX_DEVICELALTKEYMASK))
+        let right = NSEvent.ModifierFlags(rawValue: UInt(NX_DEVICERALTKEYMASK))
+        let rightPressed = try keyEvent(.flagsChanged, key: kVK_RightOption, flags: [.option, right])
+        let rightReleased = try keyEvent(.flagsChanged, key: kVK_RightOption)
+        monitor.setTrigger(try #require(DictationTrigger(capturing: rightPressed)))
+        monitor.start()
+        defer { monitor.stop() }
+        let deliver = try #require(filter)
+
+        #expect(!deliver(try keyEvent(.flagsChanged, key: kVK_Function, flags: .function)))
+        #expect(!deliver(try keyEvent(.flagsChanged, key: kVK_Option, flags: [.option, left])))
+        clock.advanceTo(initial.addingTimeInterval(0.2))
+        #expect(actions.isEmpty)
+        #expect(!deliver(try keyEvent(.flagsChanged, key: kVK_RightOption, flags: [.option, right, left])))
+        clock.advanceTo(initial.addingTimeInterval(0.4))
+        #expect(actions.isEmpty)
+        #expect(!deliver(try keyEvent(.flagsChanged, key: kVK_RightOption, flags: [.option, left])))
+        clock.advanceTo(initial.addingTimeInterval(0.6))
+        #expect(actions.isEmpty)
+
+        #expect(!deliver(rightPressed))
+        clock.advanceTo(initial.addingTimeInterval(0.8))
+        #expect(actions == [.start])
+        #expect(deliver(try keyEvent(.keyDown, key: kVK_ANSI_E, flags: [.option, right])))
+        #expect(edited)
+        #expect(!deliver(rightReleased))
+        #expect(actions == [.start, .stop])
+    }
+
     @Test func editChordFiltersBothKeyEventsWithoutEndingTheHold() throws {
         _ = NSApplication.shared
         let initial = Date(timeIntervalSince1970: 0)

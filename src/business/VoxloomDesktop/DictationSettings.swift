@@ -18,7 +18,8 @@ enum RecognitionModel: String, CaseIterable {
 
 struct DictationSettings: Equatable {
     var model: RecognitionModel = .qwen
-    var language: RecognitionLanguage = .automatic
+    var trigger: DictationTrigger = .fn
+    var language: RecognitionLanguage = .chinese
     var correctsText = false
     var usesGPU = true
     var usesInputContext = true
@@ -31,7 +32,8 @@ struct DictationSettings: Equatable {
     init(defaults: UserDefaults) {
         let saved = defaults.dictionary(forKey: Self.key)
         model = (saved?["model"] as? String).flatMap(RecognitionModel.init(rawValue:)) ?? .qwen
-        language = (saved?["language"] as? String).flatMap(RecognitionLanguage.init(rawValue:)) ?? .automatic
+        trigger = DictationTrigger(stored: saved?["trigger"] as? [String: Any]) ?? .fn
+        language = (saved?["language"] as? String).flatMap(RecognitionLanguage.init(rawValue:)) ?? language
         correctsText = saved?["correction"] as? Bool ?? correctsText
         usesGPU = saved?["gpu"] as? Bool ?? true
         usesInputContext = saved?["inputContext"] as? Bool ?? true
@@ -42,7 +44,7 @@ struct DictationSettings: Equatable {
 
     func save(to defaults: UserDefaults) {
         defaults.set([
-            "model": model.rawValue, "language": language.rawValue, "correction": correctsText,
+            "model": model.rawValue, "trigger": trigger.stored, "language": language.rawValue, "correction": correctsText,
             "gpu": usesGPU, "vocabulary": vocabulary, "inputContext": usesInputContext,
             "conversationContext": usesConversationContext, "voiceIsolation": usesVoiceIsolation
         ], forKey: Self.key)

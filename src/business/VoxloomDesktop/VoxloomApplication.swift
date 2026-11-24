@@ -42,6 +42,10 @@ import SpeechFoundation
         action: { [weak self] event in self?.receive(event) })
     private var monitor: DictationKeyMonitor?
     private var availability = DictationAvailability()
+    private var deferredAccessibility = false
+    private var needsAccessibilityGuide: Bool { !availability.canInsert && !deferredAccessibility }
+    private var microphoneAuthorization: MicrophoneCapture.Authorization
+    private var microphoneRequest: Task<Void, Never>?
     private var activationObservation: (any NSObjectProtocol)?
     private var menuItem: NSStatusItem?
     private var voicePreparation: Task<Void, Never>?
@@ -67,6 +71,7 @@ import SpeechFoundation
         self.pasteboard = pasteboard
         self.activate = activate
         self.permissions = permissions
+        microphoneAuthorization = permissions.microphoneAuthorization()
         self.keyScheduler = keyScheduler
         self.makeMonitor = makeMonitor ?? { DictationKeyMonitor(input: $0, isTrusted: permissions.isTrusted,
                                                                  filterGlobal: DictationEventTap.install) }
@@ -130,6 +135,7 @@ import SpeechFoundation
         makeMenu()
         let monitor = makeMonitor(input)
         self.monitor = monitor
+        monitor.setTrigger(flow.settings.trigger)
         monitor.start()
         activationObservation = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
@@ -137,7 +143,6 @@ import SpeechFoundation
             MainActor.assumeIsolated { self?.refreshKeyboardMonitoring() }
         }
         connectViews()
-        if !models.canRecognize(flow.settings.model) { showSettings() }
         prepareSelectedModels()
         flow.prepareForFirstRecording()
         prepareVoiceIsolationIfEnabled()
@@ -172,6 +177,9 @@ import SpeechFoundation
 
     func stop() async {
         enrollment.cancel()
+        settingsWindow.stopTriggerCapture()
+        microphoneRequest?.cancel()
+        microphoneRequest = nil
         voicePreparation?.cancel()
         if let activationObservation { NSWorkspace.shared.notificationCenter.removeObserver(activationObservation) }
         activationObservation = nil
@@ -191,23 +199,24 @@ import SpeechFoundation
 
     private func wireControls() {
         for (control, selector) in [
-            (overlay.settings, #selector(showSettings)), (overlay.sample, #selector(runSample)),
+            (overlay.settings, #selector(showSettings)),
             (overlay.enableAccessibility, #selector(enableAccessibility)),
+            (overlay.deferAccessibility, #selector(deferAccessibility)),
+            (overlay.enableMicrophone, #selector(enableMicrophone)), (overlay.retryModelDownload, #selector(retryASR)),
             (overlay.insert, #selector(insertDraft)), (overlay.clear, #selector(clearDraft)),
             (overlay.copy, #selector(copyDraft)), (settingsWindow.enableAccessibility, #selector(enableAccessibility))
         ] {
             control.target = self
             control.action = selector
         }
-        flow.onChange = { [weak self] in
-            if let self { overlay.render(flow, availability: availability) }
-        }
+        flow.onChange = { [weak self] in self?.renderOverlay() }
         flow.onOpenDraft = { [weak overlay] in overlay?.showDraftEditor() }
         overlay.onEdit = { [weak flow] text, visible, range in flow?.edit(text, basedOn: visible, replacedRange: range) }
         settingsWindow.onChange = { [weak self] value in
             guard let self else { return }
             let previous = flow.settings
             value.save(to: defaults)
+            if previous.trigger != value.trigger { monitor?.setTrigger(value.trigger) }
             flow.apply(value)
             if previous.model != value.model { modelPreparation?.cancel(previous.model.rawValue) }
             if !value.correctsText { modelPreparation?.cancel("correction") }
@@ -215,7 +224,9 @@ import SpeechFoundation
             prepareSelectedModels()
             if value.usesVoiceIsolation && !previous.usesVoiceIsolation { prepareVoiceIsolationIfEnabled() }
             refreshVoiceEnrollment()
+            if previous.trigger != value.trigger { refreshKeyboardMonitoring() }
         }
+        settingsWindow.onTriggerCapture = { [weak self] capturing in self?.monitor?.setSelectingTrigger(capturing) }
         settingsWindow.onRetryModel = { [weak self] model in self?.modelPreparation?.prepare(model, retry: true) }
         modelPreparation?.onChange = { [weak self] model in self?.modelDownloadChanged(model) }
         settingsWindow.onRecordVoice = { [weak self] kind in
@@ -251,7 +262,10 @@ import SpeechFoundation
         guard let modelPreparation else { return }
         let settings = flow.settings
         settingsWindow.updateModelDownloads(modelPreparation, settings: settings)
-        guard modelPreparation.status(for: model) == .ready else { return }
+        guard modelPreparation.status(for: model) == .ready else {
+            if model == settings.model.rawValue { renderOverlay() }
+            return
+        }
         if model == settings.model.rawValue {
             flow.showNotice("转写模型已就绪")
             flow.prepareForFirstRecording()
@@ -269,13 +283,16 @@ import SpeechFoundation
     }
 
     private func makeMenu() {
-        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        item.button?.image = NSImage(systemSymbolName: "waveform", accessibilityDescription: "Voxloom")
-        item.button?.toolTip = Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String ?? "Voxloom"
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        let name = VoxloomIdentity.displayName()
+        item.button?.image = VoxloomIdentity.menuBarIcon()
+            ?? NSImage(systemSymbolName: "waveform", accessibilityDescription: name)
+        item.button?.setAccessibilityLabel(name)
+        item.button?.toolTip = name
         let menu = NSMenu()
         for (title, action, key) in [
             ("显示语音条", #selector(showOverlay), ""), ("设置…", #selector(showSettings), ","),
-            ("退出 Voxloom", #selector(quit), "q")
+            ("退出 \(name)", #selector(quit), "q")
         ] {
             let entry = menu.addItem(withTitle: title, action: action, keyEquivalent: key)
             entry.target = self
@@ -296,21 +313,43 @@ import SpeechFoundation
 
     private func refreshPermissions() {
         availability = DictationAvailability(globalShortcut: monitor?.isGlobal == true, canInsert: permissions.canInsert)
-        overlay.render(flow, availability: availability)
+        microphoneAuthorization = permissions.microphoneAuthorization()
+        renderOverlay()
         settingsWindow.updatePermissions(availability)
+    }
+
+    private func renderOverlay() {
+        let setup: VoiceBarSetup?
+        if needsAccessibilityGuide, flow.canStart {
+            setup = .accessibility
+        } else if microphoneRequest != nil {
+            setup = .requestingMicrophone
+        } else if microphoneAuthorization != .authorized {
+            setup = .microphone(microphoneAuthorization)
+        } else if let status = modelPreparation?.status(for: flow.settings.model.rawValue), status != .ready {
+            setup = .model(status)
+        } else {
+            setup = nil
+        }
+        overlay.render(flow, availability: availability, setup: setup)
     }
 
     private func receive(_ event: FunctionKeyGesture.Action) {
         if event == .start {
             guard enrollment.active == nil else { return }
+            refreshPermissions()
+            guard !needsAccessibilityGuide, microphoneAuthorization == .authorized else {
+                overlay.show(in: NSScreen.main?.visibleFrame)
+                return
+            }
             if flow.canStart { enrollment.stopPlayback() }
         }
         if event == .confirm || (event == .start && flow.canStart) { overlay.finishKeyboardEdit() }
         flow.handle(event)
-        if event == .start { showOverlay() }
+        if event == .start { overlay.show(in: NSScreen.main?.visibleFrame) }
     }
 
-    @objc func showOverlay() { overlay.panel.orderFrontRegardless() }
+    @objc func showOverlay() { overlay.show() }
 
     @objc func showSettings() {
         refreshKeyboardMonitoring()
@@ -326,12 +365,6 @@ import SpeechFoundation
     }
     #endif
 
-    @objc private func runSample() {
-        guard enrollment.active == nil else { return }
-        do { flow.trySample(try models.sample(for: flow.settings)) }
-        catch { flow.showNotice("示例音频不可用") }
-    }
-
     @objc private func insertDraft() { receive(.confirm) }
     @objc private func clearDraft() { flow.clearOrCancel() }
 
@@ -345,6 +378,33 @@ import SpeechFoundation
     @objc private func enableAccessibility() {
         permissions.requestAccess()
         refreshKeyboardMonitoring()
+    }
+
+    @objc private func deferAccessibility() {
+        deferredAccessibility = true
+        renderOverlay()
+    }
+
+    @objc private func enableMicrophone() {
+        guard microphoneRequest == nil else { return }
+        refreshPermissions()
+        guard !needsAccessibilityGuide else { return }
+        switch microphoneAuthorization {
+        case .notDetermined:
+            microphoneRequest = Task { [weak self, request = permissions.requestMicrophone] in
+                _ = await request()
+                guard !Task.isCancelled, let self else { return }
+                microphoneRequest = nil
+                refreshPermissions()
+            }
+            renderOverlay()
+        case .denied: permissions.openMicrophoneSettings()
+        case .restricted, .authorized: break
+        }
+    }
+
+    @objc private func retryASR() {
+        modelPreparation?.prepare(flow.settings.model.rawValue, retry: true)
     }
 
     @objc private func quit() { NSApp.terminate(nil) }

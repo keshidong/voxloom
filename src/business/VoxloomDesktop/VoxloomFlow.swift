@@ -7,6 +7,8 @@ import AppKit
 #endif
 
 @MainActor final class VoxloomFlow {
+    static let insertionSentNotice = "已发送插入请求"
+
     private typealias CapturedTarget = Result<CaretInsertion.Destination, Error>
 
     private enum InsertionRequest {
@@ -31,7 +33,6 @@ import AppKit
     private(set) var settings: DictationSettings
     var state: DictationState? { session?.state }
     private(set) var notice: String?
-    private(set) var usesSample = false
     private(set) var didSendInsertion = false
     var onChange: (() -> Void)?
     var onOpenDraft: (() -> Void)?
@@ -41,9 +42,6 @@ import AppKit
 
     var canStart: Bool {
         heldRecording == nil && startup == nil && insertionRequest == nil && (state?.live.phase ?? .idle) == .idle
-    }
-    var canTrySample: Bool {
-        recognitionAvailable(settings) && canStart && (didSendInsertion || state?.text.isEmpty != false)
     }
     var canInsert: Bool {
         guard heldRecording == nil, startup == nil, let state, !didSendInsertion,
@@ -95,16 +93,11 @@ import AppKit
                 showNotice("转写模型尚未就绪，请在设置中查看下载进度")
                 return
             }
-            begin(capture(), held: true)
+            begin(capture())
         case .stop: stopRecording(automatic: true)
         case .interrupted: stopRecording(automatic: false)
         case .confirm: insertDraft()
         }
-    }
-
-    func trySample(_ audio: AudioClip) {
-        guard canTrySample else { return }
-        begin(SampleCapture(audio: audio, realtime: false), held: false)
     }
 
     func requestRecordingEdit() -> Bool {
@@ -116,7 +109,7 @@ import AppKit
 
     func cancelHeldRecording() -> Bool {
         guard heldRecording != nil else { return false }
-        clearOrCancel(notice: "本轮已取消，松开 Fn 后可重录")
+        clearOrCancel(notice: "本轮已取消，松开 \(settings.trigger.name) 后可重录")
         return true
     }
 
@@ -173,24 +166,24 @@ import AppKit
         await releaseRecognizer()
     }
 
-    private func begin(_ audio: any AudioCapturing, held: Bool) {
+    private func begin(_ audio: any AudioCapturing) {
         let previous = session
         let selected = settings
         let voiceIsolation: VoiceIsolationPreparation?
         do {
-            voiceIsolation = held && selected.usesVoiceIsolation ? try prepareVoiceIsolation() : nil
+            voiceIsolation = selected.usesVoiceIsolation ? try prepareVoiceIsolation() : nil
         } catch {
             showNotice(error.localizedDescription)
             return
         }
         let existingText = didSendInsertion ? "" : (previous?.state.text ?? "")
         let usesContext = selected.usesInputContext || selected.usesConversationContext
-        let sourceReader = held && usesContext ? readContext(selected) : nil
+        let sourceReader = usesContext ? readContext(selected) : nil
         let snapshotReader = sourceReader.map { reader in { @Sendable in await reader().snapshot } }
         #if DEBUG
         var contextReader = snapshotReader
         let diagnostic: (log: DebugContextLog, id: UUID)?
-        if held, let log = debugContextLog {
+        if let log = debugContextLog {
             let app = NSWorkspace.shared.frontmostApplication
             let target = [app?.localizedName, app?.bundleIdentifier].compactMap { $0 }.joined(separator: " · ")
             let id = log.begin(settings: selected, readerAvailable: sourceReader != nil,
@@ -208,12 +201,11 @@ import AppKit
         let next = DictationSession(live: live, existingText: existingText,
                                     readContext: contextReader, recognitionPromptByteLimit: selected.model.promptByteLimit)
         notice = nil
-        usesSample = !held
         didSendInsertion = false
         insertionRequest = nil
         if existingText.isEmpty { editedTarget = nil }
-        heldRecording = held ? HeldRecording(target: Result { try insertion.destination(requireFocusedInput: true) },
-                                             appendsToDraft: !existingText.isEmpty) : nil
+        heldRecording = HeldRecording(target: Result { try insertion.destination(requireFocusedInput: true) },
+                                     appendsToDraft: !existingText.isEmpty)
         observation?.dispose()
         session = next
         observation = next.states.subscribe(onNext: { [weak self] _ in self?.refresh() })
@@ -324,7 +316,7 @@ import AppKit
         do {
             try insertion.insert(text, at: target)
             didSendInsertion = true
-            notice = "已发送插入请求"
+            notice = Self.insertionSentNotice
         } catch { notice = error.localizedDescription }
     }
 }
