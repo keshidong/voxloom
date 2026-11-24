@@ -39,9 +39,13 @@ struct LocalModels {
 
     func corrector(for settings: DictationSettings) -> (any TextCorrecting)? {
         guard settings.correctsText, downloads?.isInstalled("correction") ?? true else { return nil }
-        return QwenTextCorrector(configuration: .init(executable: file("llama-completion"),
-            model: weightFile("Qwen3-4B-Instruct-2507-Q4_K_M.gguf", group: "correction"),
+        return QwenTextCorrector(configuration: .init(executable: file("llama-completion"), model: qwenTextWeights,
             useGPU: settings.usesGPU, mode: .interactive))
+    }
+
+    func contextSummarizer(for settings: DictationSettings) -> (any RecognitionContextSummarizing)? {
+        guard settings.summarizesConversation, downloads?.isInstalled("correction") ?? true else { return nil }
+        return QwenContextSummarizer(executable: file("llama-completion"), model: qwenTextWeights, useGPU: settings.usesGPU)
     }
 
     func voiceIsolator() -> VoiceIsolator? {
@@ -49,6 +53,8 @@ struct LocalModels {
         guard FileManager.default.isExecutableFile(atPath: executable.path) else { return nil }
         return VoiceIsolator(executable: executable, weightsDirectory: downloads?.directory(for: "voiceIsolation"))
     }
+
+    private var qwenTextWeights: URL { weightFile("Qwen3-4B-Instruct-2507-Q4_K_M.gguf", group: "correction") }
 
     private func weightFile(_ name: String, group: String) -> URL {
         downloads?.directory(for: group).appending(path: name) ?? file(name)

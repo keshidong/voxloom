@@ -94,8 +94,10 @@ import SpeechFoundation
             readContext: { settings in
                 guard permissions.isTrusted() else { return nil }
                 return SystemTextInput.contextReader(includeDraft: settings.usesInputContext,
-                                                     includeConversation: settings.usesConversationContext)
+                                                     includeConversation: settings.usesConversationContext,
+                                                     usesConversationModel: settings.summarizesConversation)
             },
+            contextSummarizer: models.contextSummarizer,
             prepareVoiceIsolation: {
                 guard let voiceIsolator else { throw VoiceIsolationSetupError.unavailable }
                 guard models.downloads?.isInstalled("voiceIsolation") != false else {
@@ -143,7 +145,6 @@ import SpeechFoundation
             MainActor.assumeIsolated { self?.refreshKeyboardMonitoring() }
         }
         connectViews()
-        prepareSelectedModels()
         flow.prepareForFirstRecording()
         prepareVoiceIsolationIfEnabled()
     }
@@ -152,6 +153,7 @@ import SpeechFoundation
         wireControls()
         refreshPermissions()
         showOverlay()
+        prepareSelectedModels()
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
@@ -219,7 +221,6 @@ import SpeechFoundation
             if previous.trigger != value.trigger { monitor?.setTrigger(value.trigger) }
             flow.apply(value)
             if previous.model != value.model { modelPreparation?.cancel(previous.model.rawValue) }
-            if !value.correctsText { modelPreparation?.cancel("correction") }
             if !value.usesVoiceIsolation { modelPreparation?.cancel("voiceIsolation") }
             prepareSelectedModels()
             if value.usesVoiceIsolation && !previous.usesVoiceIsolation { prepareVoiceIsolationIfEnabled() }
@@ -227,7 +228,10 @@ import SpeechFoundation
             if previous.trigger != value.trigger { refreshKeyboardMonitoring() }
         }
         settingsWindow.onTriggerCapture = { [weak self] capturing in self?.monitor?.setSelectingTrigger(capturing) }
-        settingsWindow.onRetryModel = { [weak self] model in self?.modelPreparation?.prepare(model, retry: true) }
+        settingsWindow.onRetryModel = { [weak self] model in
+            if model == "correction" { self?.prepareContextModelDownload(retry: true) }
+            else { self?.modelPreparation?.prepare(model, retry: true) }
+        }
         modelPreparation?.onChange = { [weak self] model in self?.modelDownloadChanged(model) }
         settingsWindow.onRecordVoice = { [weak self] kind in
             guard let self else { return }
@@ -253,9 +257,14 @@ import SpeechFoundation
         guard let modelPreparation else { return }
         let settings = flow.settings
         modelPreparation.prepare(settings.model.rawValue)
-        if settings.correctsText { modelPreparation.prepare("correction") }
+        prepareContextModelDownload()
         if settings.usesVoiceIsolation, voiceIsolator != nil { modelPreparation.prepare("voiceIsolation") }
         settingsWindow.updateModelDownloads(modelPreparation, settings: settings)
+    }
+
+    private func prepareContextModelDownload(retry: Bool = false) {
+        guard let modelPreparation, modelPreparation.status(for: flow.settings.model.rawValue) == .ready else { return }
+        modelPreparation.prepare("correction", retry: retry)
     }
 
     private func modelDownloadChanged(_ model: String) {
@@ -269,7 +278,9 @@ import SpeechFoundation
         if model == settings.model.rawValue {
             flow.showNotice("转写模型已就绪")
             flow.prepareForFirstRecording()
+            prepareContextModelDownload()
         }
+        if model == "correction" { flow.contextModelDidBecomeAvailable() }
         if model == "voiceIsolation" { prepareVoiceIsolationIfEnabled() }
     }
 

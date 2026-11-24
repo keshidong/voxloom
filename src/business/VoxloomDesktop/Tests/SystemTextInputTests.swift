@@ -88,6 +88,36 @@ struct SystemTextInputTests {
         #expect(result.utf16.count <= 240)
     }
 
+    enum TerminalCaret: CaseIterable { case unavailable, composer, footer }
+
+    @Test(arguments: TerminalCaret.allCases)
+    func terminalUsesVisibleChatFromTheFocusedTextArea(caret: TerminalCaret) {
+        let padding = String(repeating: " ", count: 160)
+        let screen = [
+            "› 对比  Whisper 的热词。",
+            "╭────────────────────────╮",
+            "│  Qwen3-ASR 支持系统提示。 │",
+            "│  可以附上最近两条消息。    │",
+            "╰────────────────────────╯",
+            "• Working (21m 33s)",
+            "› 这里是未发送的草稿",
+            "Model · current workspace",
+            "│  Switch thread · keyboard shortcut"
+        ].map { $0 + padding }.joined(separator: "\n") as NSString
+        let caretAnchor = switch caret {
+        case .unavailable: nil as String?
+        case .composer: "这里是未发送"
+        case .footer: "Switch thread"
+        }
+        let selection = caretAnchor.map { NSRange(location: screen.range(of: $0).location + 1, length: 0) }
+        let reading = SystemTextInput.terminalReading(at: selection, visible: NSRange(location: 0, length: screen.length),
+            length: screen.length, includeDraft: false, includeConversation: true,
+            readRange: { screen.substring(with: $0) })
+
+        #expect(reading.draft.isEmpty)
+        #expect(reading.nearbyChatText == ["对比  Whisper 的热词。", "Qwen3-ASR 支持系统提示。\n可以附上最近两条消息。"])
+    }
+
     @Test func aRebuiltComposerRequiresTheSameIdentifierDocumentAndRole() {
         let document = AXUIElementCreateApplication(101)
         let otherDocument = AXUIElementCreateApplication(102)

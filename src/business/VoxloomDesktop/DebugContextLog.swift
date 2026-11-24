@@ -32,7 +32,7 @@ import SpeechInput
     }
 
     func record(prompt: String, for id: UUID) {
-        guard entry?.id == id, entry?.prompt == nil else { return }
+        guard entry?.id == id, entry?.prompt != prompt else { return }
         entry?.prompt = prompt
         onChange?()
     }
@@ -47,7 +47,8 @@ import SpeechInput
         let settings = entry.settings
         let status: String
         if let snapshot = entry.snapshot {
-            status = snapshot.draft.isEmpty && snapshot.recentMessages.isEmpty ? "未读到可用文字" : "读取完成"
+            status = snapshot.draft.isEmpty && snapshot.recentMessages.isEmpty && snapshot.nearbyChatText.isEmpty
+                ? "未读到可用文字" : "读取完成"
         } else if entry.readerAvailable {
             status = "等待读取"
         } else if settings.usesInputContext || settings.usesConversationContext {
@@ -57,6 +58,7 @@ import SpeechInput
         }
         let draft = entry.snapshot?.draft ?? ""
         let messages = (entry.snapshot?.recentMessages ?? []).enumerated().map { "\($0.offset + 1). \($0.element)" }
+        let candidateCount = entry.snapshot?.nearbyChatText.count ?? 0
         let promptState = entry.prompt.map { $0.isEmpty ? "（空）" : $0 } ?? "等待识别请求"
         let bytes = entry.prompt.map { String($0.utf8.count) } ?? "—"
         let conversationStatus: String
@@ -70,6 +72,7 @@ import SpeechInput
         return """
         前台 App  \(entry.target ?? "未知")
         识别模型  \(settings.model.title)
+        上下文提取  \(settings.contextModel.title)
         读取状态  \(status)
 
         光标附近文字 · \(settings.usesInputContext ? "开启" : "关闭")
@@ -77,9 +80,10 @@ import SpeechInput
 
         近期消息片段 · \(settings.usesConversationContext ? "开启" : "关闭") · \(messages.count) 条
         近期消息读取  \(conversationStatus)
+        模型后备候选  \(candidateCount) 条
         \(messages.isEmpty ? "（无）" : messages.joined(separator: "\n\n"))
 
-        ASR 提示词 · \(bytes) / \(settings.model.promptByteLimit) UTF-8 字节
+        ASR 提示词 · \(bytes) / \(settings.recognitionPromptByteLimit) UTF-8 字节
         \(promptState)
         """
     }

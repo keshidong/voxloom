@@ -56,6 +56,8 @@ import AppKit
     private let corrector: (DictationSettings) -> (any TextCorrecting)?
     private let insertion: CaretInsertion
     private let readContext: (DictationSettings) -> (@Sendable () async -> DesktopContextReading)?
+    private let makeContextSummarizer: (DictationSettings) -> (any RecognitionContextSummarizing)?
+    private var contextSummaries: DictationContextSummaries?
     private let prepareVoiceIsolation: () throws -> VoiceIsolationPreparation
     private let recognitionAvailable: (DictationSettings) -> Bool
     private var session: DictationSession?
@@ -71,6 +73,7 @@ import AppKit
          recognizer: @escaping (DictationSettings) -> any SpeechRecognizer,
          corrector: @escaping (DictationSettings) -> (any TextCorrecting)?, insertion: CaretInsertion,
          readContext: @escaping (DictationSettings) -> (@Sendable () async -> DesktopContextReading)? = { _ in nil },
+         contextSummarizer: @escaping (DictationSettings) -> (any RecognitionContextSummarizing)? = { _ in nil },
          prepareVoiceIsolation: @escaping () throws -> VoiceIsolationPreparation = {
              throw VoiceIsolationSetupError.unavailable
          },
@@ -81,6 +84,7 @@ import AppKit
         self.corrector = corrector
         self.insertion = insertion
         self.readContext = readContext
+        makeContextSummarizer = contextSummarizer
         self.prepareVoiceIsolation = prepareVoiceIsolation
         self.recognitionAvailable = recognitionAvailable
     }
@@ -114,6 +118,10 @@ import AppKit
     }
 
     func apply(_ settings: DictationSettings) {
+        if self.settings.summarizesConversation != settings.summarizesConversation || self.settings.usesGPU != settings.usesGPU {
+            contextSummaries?.cancel()
+            contextSummaries = nil
+        }
         self.settings = settings
         onChange?()
     }
@@ -123,6 +131,12 @@ import AppKit
         let recognizer = makeRecognizer(settings)
         activeEngine = (RecognitionEngine(settings), recognizer)
         enginePreparation = Task(priority: .utility) { await recognizer.prepare() }
+    }
+
+    func contextModelDidBecomeAvailable() {
+        guard let contextSummaries, settings.summarizesConversation,
+              let summarizer = makeContextSummarizer(settings) else { return }
+        contextSummaries.installSummarizer(summarizer)
     }
 
     func edit(_ text: String, basedOn visibleText: String, replacedRange: NSRange? = nil) {
@@ -162,6 +176,8 @@ import AppKit
         observation?.dispose()
         startup?.cancel()
         await startup?.value
+        await contextSummaries?.shutdown()
+        contextSummaries = nil
         await session?.shutdown()
         await releaseRecognizer()
     }
@@ -179,6 +195,7 @@ import AppKit
         let existingText = didSendInsertion ? "" : (previous?.state.text ?? "")
         let usesContext = selected.usesInputContext || selected.usesConversationContext
         let sourceReader = usesContext ? readContext(selected) : nil
+        let summaries = sourceReader != nil && selected.summarizesConversation ? prepareContextSummaries(for: selected) : nil
         let snapshotReader = sourceReader.map { reader in { @Sendable in await reader().snapshot } }
         #if DEBUG
         var contextReader = snapshotReader
@@ -199,7 +216,8 @@ import AppKit
         let live = LiveSpeechSession(capture: audio, ownsRecognizer: false,
                                      prepareFinalAudio: voiceIsolation?.final, preparePreviewAudio: voiceIsolation?.preview)
         let next = DictationSession(live: live, existingText: existingText,
-                                    readContext: contextReader, recognitionPromptByteLimit: selected.model.promptByteLimit)
+                                    readContext: contextReader, recognitionPromptByteLimit: selected.recognitionPromptByteLimit,
+                                    contextSummaries: summaries, includesOriginalMessages: selected.summarizesConversation)
         notice = nil
         didSendInsertion = false
         insertionRequest = nil
@@ -224,6 +242,13 @@ import AppKit
             onChange?()
         }
         onChange?()
+    }
+
+    private func prepareContextSummaries(for settings: DictationSettings) -> DictationContextSummaries? {
+        if contextSummaries == nil {
+            contextSummaries = DictationContextSummaries(summarizer: makeContextSummarizer(settings))
+        }
+        return contextSummaries
     }
 
     private func recognizer(for settings: DictationSettings) async -> (any SpeechRecognizer)? {

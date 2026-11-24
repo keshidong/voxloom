@@ -1,10 +1,62 @@
 import Foundation
 import RxSwift
 import SpeechFoundation
-import SpeechInput
 import Testing
+@testable import SpeechInput
 
 @MainActor struct DictationSessionTests {
+    @Test(arguments: [false, true], [false, true])
+    func recognitionKeepsTranscribingWhileTheLatestTwoMessagesAreSummarized(
+        usesNearbyText: Bool, modelAlreadyInstalled: Bool
+    ) async throws {
+        let finish = AsyncStream<Void>.makeStream()
+        defer { finish.continuation.finish() }
+        let recent = ["讨论  MLX Audio", "开始比较 Qwen3-ASR\n请保留原文。"]
+        let nearbyText = usesNearbyText ? ["SearchPanel", recent[0], "ShareButton", recent[1]] : []
+        let source: RecognitionContextSource = usesNearbyText ? .nearbyText(nearbyText) : .messages(recent)
+        let provider = HeldContextSummarizer(finish: finish.stream, originalMessages: recent)
+        let summaries = DictationContextSummaries(summarizer: modelAlreadyInstalled ? provider : nil)
+
+        func recognize(_ messages: [String]) async throws -> String {
+            let capture = DraftCapture()
+            let session = DictationSession(live: LiveSpeechSession(capture: capture), readContext: {
+                .init(recentMessages: usesNearbyText ? [] : messages, nearbyChatText: nearbyText)
+            }, recognitionPromptByteLimit: 192, contextSummaries: summaries)
+            let recognizer = ContextRecordingRecognizer()
+            session.start(recognizer: recognizer, options: .init(context: "ManualTerm"))
+            try await waitUntil { capture.sink != nil }
+            capture.sink?([1000, -1000])
+            try await waitUntil { session.state.live.samples.count == 2 }
+            session.stopForAutomaticInsertion()
+            try await waitUntil { session.state.isReadyForAutomaticInsertion }
+            let prompt = try #require(await recognizer.options.first?.context)
+            await session.shutdown()
+            return prompt
+        }
+
+        let initial = try await recognize(["EarlierTopic"] + recent)
+        let initialContext = try CapturedConversationPrompt.decode(initial)
+        #expect(initialContext.asrHints?.terms?.hasPrefix("ManualTerm") == true)
+        #expect(initialContext.recentMessages == (usesNearbyText ? nil : recent))
+        #expect(!initial.contains("EarlierTopic"))
+        #expect(!initial.contains("正在比较语音转写模型"))
+        if !modelAlreadyInstalled {
+            #expect(await provider.requests.isEmpty)
+            summaries.installSummarizer(provider)
+        }
+        finish.continuation.finish()
+        try await waitUntil { summaries.summary(for: source) != nil }
+
+        let withSummary = try await recognize(recent)
+        let summarized = try CapturedConversationPrompt.decode(withSummary)
+        #expect(summarized.asrHints?.terms?.hasPrefix("ManualTerm") == true)
+        #expect(summarized.currentActivity == "正在比较语音转写模型。")
+        #expect(summarized.recentMessages == recent)
+        #expect(!withSummary.contains("SearchPanel") && !withSummary.contains("ShareButton"))
+        #expect(withSummary.utf8.count <= 192)
+        #expect(await provider.requests == [source])
+    }
+
     @Test func keyboardEditsScheduleCorrectionAndTheNextJobUsesTheLiveRebasedDraft() async throws {
         let clock = HistoricalScheduler(initialClock: Date(timeIntervalSince1970: 0))
         let finish = AsyncStream<Void>.makeStream()
@@ -233,6 +285,24 @@ import Testing
             try #require(ContinuousClock.now < deadline)
             await Task.yield()
         }
+    }
+}
+
+private actor HeldContextSummarizer: RecognitionContextSummarizing {
+    let finish: AsyncStream<Void>
+    let originalMessages: [String]
+    private(set) var requests: [RecognitionContextSource] = []
+
+    init(finish: AsyncStream<Void>, originalMessages: [String]) {
+        self.finish = finish
+        self.originalMessages = originalMessages
+    }
+
+    func summarize(_ source: RecognitionContextSource) async throws -> RecognitionContextSummary {
+        requests.append(source)
+        for await _ in finish { break }
+        return .init(summary: "正在比较语音转写模型。", terms: ["MLX Audio", "Qwen3-ASR"],
+                     originalMessages: originalMessages)
     }
 }
 

@@ -48,12 +48,14 @@ public struct DictationState: Sendable, Equatable {
     public init(live: LiveSpeechSession, existingText: String = "",
                 correctionScheduler: any SchedulerType = MainScheduler.instance,
                 readContext: (@Sendable () async -> DictationContextSnapshot)?,
-                recognitionPromptByteLimit: Int? = nil) {
+                recognitionPromptByteLimit: Int? = nil,
+                contextSummaries: DictationContextSummaries? = nil, includesOriginalMessages: Bool = false) {
         self.live = live
         scheduler = correctionScheduler
         self.existingText = existingText
         inputContext = if readContext != nil || recognitionPromptByteLimit != nil {
-            DictationInputContext(read: readContext, promptByteLimit: recognitionPromptByteLimit)
+            DictationInputContext(read: readContext, promptByteLimit: recognitionPromptByteLimit, summaries: contextSummaries,
+                                  includesOriginalMessages: includesOriginalMessages || contextSummaries != nil)
         } else { nil }
         let initial = DictationState(text: existingText)
         state = initial

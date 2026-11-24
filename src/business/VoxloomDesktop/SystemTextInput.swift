@@ -5,9 +5,10 @@ import SpeechInput
 struct DesktopContextReading: Sendable {
     var draft = ""
     var conversation: Result<[String], ConversationReadError> = .failure(.disabled)
+    var nearbyChatText: [String] = []
 
     var snapshot: DictationContextSnapshot {
-        .init(draft: draft, recentMessages: (try? conversation.get()) ?? [])
+        .init(draft: draft, recentMessages: (try? conversation.get()) ?? [], nearbyChatText: nearbyChatText)
     }
 }
 
@@ -34,7 +35,7 @@ enum SystemTextInput {
         }
     }
 
-    @MainActor static func contextReader(includeDraft: Bool, includeConversation: Bool)
+    @MainActor static func contextReader(includeDraft: Bool, includeConversation: Bool, usesConversationModel: Bool = false)
         -> (@Sendable () async -> DesktopContextReading)? {
         guard let pid = SystemPaste.foregroundTarget() else { return nil }
         let bundleIdentifier = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier
@@ -42,7 +43,8 @@ enum SystemTextInput {
             guard !Task.isCancelled else { return .init(conversation: .failure(.cancelled)) }
             guard await isForeground(pid) else { return .init(conversation: .failure(.targetChanged)) }
             let context = readContext(pid, bundleIdentifier: bundleIdentifier,
-                                      includeDraft: includeDraft, includeConversation: includeConversation)
+                                      includeDraft: includeDraft, includeConversation: includeConversation,
+                                      usesConversationModel: usesConversationModel)
             return await isForeground(pid) ? context : .init(conversation: .failure(.targetChanged))
         }
     }
@@ -70,7 +72,7 @@ enum SystemTextInput {
     }
 
     private static func readContext(_ pid: pid_t, bundleIdentifier: String?, includeDraft: Bool,
-                                    includeConversation: Bool) -> DesktopContextReading {
+                                    includeConversation: Bool, usesConversationModel: Bool) -> DesktopContextReading {
         let app = application(pid)
         guard let input = focusedTextInput(in: app) else {
             return .init(conversation: .failure(.noSupportedInput))
@@ -83,33 +85,49 @@ enum SystemTextInput {
             return .init(conversation: .failure(.inputNotEditable))
         }
         guard !Task.isCancelled else { return .init(conversation: .failure(.cancelled)) }
-        let draft = includeDraft ? readDraft(input.element, mode: mode) : ""
-        let conversation = includeConversation ? readConversation(near: input.element, in: app) : .failure(.disabled)
+        var context = DesktopContextReading()
+        if mode == .terminal && includeConversation && usesConversationModel {
+            context = readTerminal(input.element, includeDraft: includeDraft, includeConversation: true)
+        } else {
+            if includeConversation {
+                context = readConversation(near: input.element, in: app, usesModel: usesConversationModel)
+            }
+            if includeDraft { context.draft = readDraft(input.element, mode: mode) }
+        }
         guard !Task.isCancelled else { return .init(conversation: .failure(.cancelled)) }
         guard let current = focusedTextInput(in: app)?.element, CFEqual(input.element, current) else {
             return .init(conversation: .failure(.targetChanged))
         }
-        return .init(draft: draft, conversation: conversation)
+        return context
     }
 
     private static func readDraft(_ input: AXUIElement, mode: ContextMode) -> String {
+        if mode == .terminal {
+            return readTerminal(input, includeDraft: true, includeConversation: false).draft
+        }
         let selectionRange = selection(of: input)
         let length = (attribute(kAXNumberOfCharactersAttribute, of: input) as? NSNumber)?.intValue
-        if mode == .terminal {
-            let visible = range(kAXVisibleCharacterRangeAttribute, of: input)
-            return terminalExcerpt(at: selectionRange, visible: visible, length: length,
-                                   readRange: { string(in: $0, of: input, acceptsAttributedText: true) })
-        }
         return excerpt(at: selectionRange, length: length, readRange: { string(in: $0, of: input) },
                        readShortValue: { attribute(kAXValueAttribute, of: input) as? String })
     }
 
-    private static func readConversation(near input: AXUIElement, in app: AXUIElement)
-        -> Result<[String], ConversationReadError> {
-        guard !Task.isCancelled else { return .failure(.cancelled) }
-        guard let window = related(kAXFocusedWindowAttribute, to: app) else { return .failure(.noFocusedWindow) }
+    private static func readTerminal(_ input: AXUIElement, includeDraft: Bool, includeConversation: Bool) -> DesktopContextReading {
+        let selectionRange = selection(of: input)
+        let visible = range(kAXVisibleCharacterRangeAttribute, of: input)
+        let length = (attribute(kAXNumberOfCharactersAttribute, of: input) as? NSNumber)?.intValue
+        return terminalReading(at: selectionRange, visible: visible, length: length, includeDraft: includeDraft,
+                               includeConversation: includeConversation,
+                               readRange: { string(in: $0, of: input, acceptsAttributedText: true) })
+    }
+
+    private static func readConversation(near input: AXUIElement, in app: AXUIElement, usesModel: Bool)
+        -> DesktopContextReading {
+        guard !Task.isCancelled else { return .init(conversation: .failure(.cancelled)) }
+        guard let window = related(kAXFocusedWindowAttribute, to: app) else {
+            return .init(conversation: .failure(.noFocusedWindow))
+        }
         let title = attribute(kAXTitleAttribute, of: window) as? String
-        let deadline = ContinuousClock.now.advanced(by: .milliseconds(240))
+        var deadline = ContinuousClock.now.advanced(by: .milliseconds(240))
         let source = ConversationHistory<AXUIElement>(
             isSame: { CFEqual($0, $1) },
             parent: { related(kAXParentAttribute, to: $0) },
@@ -118,12 +136,23 @@ enum SystemTextInput {
             text: { (attribute(kAXValueAttribute, of: $0) ?? attribute(kAXTitleAttribute, of: $0)) as? String },
             canContinue: { !Task.isCancelled && ContinuousClock.now < deadline }
         )
-        return source.read(near: input) {
+        func isCurrent() -> Bool {
             guard let currentWindow = related(kAXFocusedWindowAttribute, to: app), CFEqual(window, currentWindow) else {
                 return false
             }
             return title == attribute(kAXTitleAttribute, of: currentWindow) as? String
         }
+        let conversation = source.read(near: input, messageLimit: usesModel ? 2 : 6,
+                                       preservesOriginalText: usesModel, isCurrent: isCurrent)
+        guard usesModel else { return .init(conversation: conversation) }
+        let needsFallback = switch conversation {
+        case .success(let messages): messages.count < 2
+        case .failure(.noHistoryArea), .failure(.noMessageText): true
+        default: false
+        }
+        guard needsFallback else { return .init(conversation: conversation) }
+        deadline = ContinuousClock.now.advanced(by: .milliseconds(140))
+        return .init(conversation: conversation, nearbyChatText: source.readNearbyText(near: input, isCurrent: isCurrent))
     }
 
     private static func conversationKind(_ element: AXUIElement) -> ConversationHistory<AXUIElement>.Kind {
@@ -177,7 +206,24 @@ enum SystemTextInput {
 
     static func terminalExcerpt(at selection: NSRange?, visible: NSRange?, length: Int?,
                                 readRange: (NSRange) -> String?) -> String {
-        let scanLimit = 4_096
+        terminalReading(at: selection, visible: visible, length: length, includeDraft: true,
+                        includeConversation: false, readRange: readRange).draft
+    }
+
+    static func terminalReading(at selection: NSRange?, visible: NSRange?, length: Int?,
+                                includeDraft: Bool, includeConversation: Bool,
+                                readRange: (NSRange) -> String?) -> DesktopContextReading {
+        let scanLimit = includeConversation ? 8_192 : 4_096
+        let conversation: Result<[String], ConversationReadError> = .failure(includeConversation ? .noHistoryArea : .disabled)
+        guard let screen = terminalScan(at: selection, visible: visible, length: length, scanLimit: scanLimit,
+                                        readRange: readRange) else { return .init(conversation: conversation) }
+        return .init(draft: includeDraft ? compactTerminalRows(in: screen.text, caretOffset: screen.caretOffset) : "",
+                     conversation: conversation,
+                     nearbyChatText: includeConversation ? terminalChatCandidates(in: screen.text, caretOffset: screen.caretOffset) : [])
+    }
+
+    private static func terminalScan(at selection: NSRange?, visible: NSRange?, length: Int?, scanLimit: Int,
+                                     readRange: (NSRange) -> String?) -> (text: String, caretOffset: Int?)? {
         let scanAfterCaret = 1_024
         let caret = selection.flatMap { $0.length == 0 && (1..<NSNotFound).contains($0.location) ? $0.location : nil }
         let knownLength = length.flatMap { (0..<NSNotFound).contains($0) ? $0 : nil }
@@ -186,15 +232,15 @@ enum SystemTextInput {
         if let visible {
             let (visibleEnd, overflow) = visible.location.addingReportingOverflow(visible.length)
             guard !overflow, visibleEnd != NSNotFound, (0..<NSNotFound).contains(visible.location),
-                  visible.length > 0 else { return "" }
+                  visible.length > 0 else { return nil }
             start = visible.location
             end = min(visibleEnd, knownLength ?? visibleEnd)
         } else {
-            guard let textEnd = knownLength ?? caret else { return "" }
+            guard let textEnd = knownLength ?? caret else { return nil }
             start = 0
             end = textEnd
         }
-        guard end > start else { return "" }
+        guard end > start else { return nil }
         let range: NSRange
         let caretOffset: Int?
         if let caret, (start...end).contains(caret) {
@@ -207,9 +253,62 @@ enum SystemTextInput {
             range = NSRange(location: tail, length: end - tail)
             caretOffset = nil
         }
-        guard let text = readRange(range) else { return "" }
-        let scanned = String(decoding: text.utf16.prefix(range.length), as: UTF16.self)
-        return compactTerminalRows(in: scanned, caretOffset: caretOffset)
+        guard let text = readRange(range) else { return nil }
+        return (String(decoding: text.utf16.prefix(range.length), as: UTF16.self), caretOffset)
+    }
+
+    private static func terminalChatCandidates(in text: String, caretOffset: Int?) -> [String] {
+        let rows = text.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline)
+        let promptMarkers: Set<Character> = ["›", "❯", "»"]
+        let frameBars: Set<Character> = ["│", "┃", "║"]
+        func isPrompt(_ row: Substring) -> Bool {
+            row.first(where: { !$0.isWhitespace }).map { promptMarkers.contains($0) } ?? false
+        }
+
+        let caretRow = terminalRow(at: caretOffset, in: text)
+        let promptRow = rows.lastIndex(where: isPrompt)
+        let nearbyPrompt: Int? = promptRow.flatMap { prompt in
+            guard let caretRow, (0...3).contains(caretRow - prompt) else { return nil }
+            return prompt
+        }
+        let end = nearbyPrompt ?? caretRow ?? promptRow ?? rows.count
+
+        var candidates: [String] = []
+        var block: [String] = []
+        var framedBlock = false
+        func finishBlock() {
+            if !block.isEmpty { candidates.append(block.joined(separator: "\n")) }
+            block = []
+        }
+        for row in rows.prefix(end) {
+            var body = row.trimmingCharacters(in: .whitespaces)
+            guard let marker = body.first, body.contains(where: { $0.isLetter || $0.isNumber }) else {
+                finishBlock()
+                continue
+            }
+            if marker == "•", body.range(of: #"\(\s*\d+[hms](?:\s+\d+[hms])*\s*\)(?:\s*[·–—]\s*.*)?$"#,
+                                          options: .regularExpression) != nil {
+                finishBlock()
+                continue
+            }
+            let framed = frameBars.contains(marker)
+            let startsMessage = promptMarkers.contains(marker) || marker == "•"
+            if framed || startsMessage { body.removeFirst() }
+            if framed, body.last == marker { body.removeLast() }
+            body = body.trimmingCharacters(in: .whitespaces)
+            guard !body.isEmpty else { continue }
+            let continuesBlock = framed ? framedBlock : (!framedBlock && !startsMessage && row.hasPrefix("  "))
+            if !continuesBlock { finishBlock() }
+            block.append(body)
+            framedBlock = framed
+        }
+        finishBlock()
+        return Array(candidates.suffix(12))
+    }
+
+    private static func terminalRow(at offset: Int?, in text: String) -> Int? {
+        guard let offset, offset <= text.utf16.count else { return nil }
+        return String(decoding: text.utf16.prefix(offset), as: UTF16.self).filter(\.isNewline).count
     }
 
     private static func compactTerminalRows(in text: String, caretOffset: Int?) -> String {
@@ -218,9 +317,7 @@ enum SystemTextInput {
         func hasText(_ row: String) -> Bool { row.contains { $0.isLetter || $0.isNumber } }
 
         let context: [String]
-        if let caretOffset, caretOffset <= text.utf16.count {
-            let prefix = String(decoding: text.utf16.prefix(caretOffset), as: UTF16.self)
-            let cursorRow = prefix.filter(\.isNewline).count
+        if let cursorRow = terminalRow(at: caretOffset, in: text) {
             // Terminal includes the input row and its placeholder in the rendered text.
             let above = rows.prefix(cursorRow).filter(hasText).suffix(3)
             let below = rows.dropFirst(cursorRow + 1).filter(hasText).prefix(3)

@@ -1,4 +1,4 @@
-/// Provider-neutral options. Context is a vocabulary hint, not a command to rewrite speech.
+/// Provider-neutral transcription options. Context provides background and vocabulary for recognition.
 public struct RecognitionOptions: Sendable, Equatable {
     public let language: RecognitionLanguage
     public let context: String

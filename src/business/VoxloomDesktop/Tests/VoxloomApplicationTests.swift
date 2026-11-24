@@ -85,6 +85,8 @@ import Testing
         defer { defaults.removePersistentDomain(forName: suite) }
         let gate = AsyncStream<Void>.makeStream()
         let started = AsyncStream<Void>.makeStream()
+        let optionalGate = AsyncStream<Void>.makeStream()
+        let optionalStart = OptionalModelStart()
         var microphone = MicrophoneCapture.Authorization.notDetermined
         var microphoneRequests = 0
         var accessibilityGranted = false
@@ -107,6 +109,10 @@ import Testing
                     started.continuation.yield(())
                     var permit = gate.stream.makeAsyncIterator()
                     _ = await permit.next()
+                } else {
+                    await optionalStart.record(asrReady: downloads.isInstalled("qwen"))
+                    var permit = optionalGate.stream.makeAsyncIterator()
+                    _ = await permit.next()
                 }
                 let file = directory.appending(path: url.lastPathComponent)
                 try Data("ok".utf8).write(to: file)
@@ -116,6 +122,7 @@ import Testing
         defer {
             gate.continuation.finish()
             started.continuation.finish()
+            optionalGate.continuation.finish()
             app.settingsWindow.window?.orderOut(nil)
             app.overlay.panel.orderOut(nil)
         }
@@ -123,6 +130,7 @@ import Testing
         #expect(app.settingsWindow.window?.isVisible == false)
         var transfer = started.stream.makeAsyncIterator()
         _ = await transfer.next()
+        #expect(await optionalStart.asrReady == nil)
         #expect(microphoneRequests == 0)
         #expect(!app.overlay.enableAccessibility.isHiddenOrHasHiddenAncestor)
         #expect(app.overlay.enableMicrophone.isHiddenOrHasHiddenAncestor)
@@ -163,14 +171,22 @@ import Testing
         let deadline = ContinuousClock.now.advanced(by: .seconds(3))
         while await engine.prepares == 0 && ContinuousClock.now < deadline { await Task.yield() }
         #expect(await engine.prepares == 1)
+        while await optionalStart.asrReady == nil && ContinuousClock.now < deadline { await Task.yield() }
+        #expect(await optionalStart.asrReady == true)
         #expect(app.overlay.downloadProgress.isHiddenOrHasHiddenAncestor)
         app.flow.handle(.start)
         while capture.receive == nil && ContinuousClock.now < deadline { await Task.yield() }
         #expect(capture.receive != nil)
         #expect(!downloads.isInstalled("correction"))
-        let correction = app.settingsWindow.correction
-        correction.selectItem(at: 0)
-        correction.sendAction(correction.action, to: correction.target)
+        capture.receive?([3000, -3000])
+        while app.flow.state?.live.samples.count != 2 && ContinuousClock.now < deadline { await Task.yield() }
+        app.flow.handle(.stop)
+        while !app.flow.canStart && ContinuousClock.now < deadline { await Task.yield() }
+        #expect(app.flow.state?.text == "第一段")
+        #expect(!app.flow.settings.correctsText)
+        #expect(!app.flow.settings.usesConversationContext)
+        #expect(!downloads.isInstalled("correction"))
+        optionalGate.continuation.finish()
         let optionalDeadline = ContinuousClock.now.advanced(by: .seconds(3))
         while !downloads.isInstalled("correction") && ContinuousClock.now < optionalDeadline { await Task.yield() }
         #expect(downloads.isInstalled("correction"))
@@ -482,6 +498,95 @@ import Testing
         await app.stop()
     }
 
+    @Test func contextDownloadsAutomaticallyAfterASRAndShowsProgressWhileListening() async throws {
+        _ = NSApplication.shared
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let manifest = """
+        {"qwen":[{"path":"weights","url":"https://example.com/required",
+        "sha256":"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df","bytes":2}],
+        "correction":[{"path":"Qwen3-4B-Instruct-2507-Q4_K_M.gguf","url":"https://example.com/optional",
+        "sha256":"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df","bytes":2}]}
+        """
+        try Data(manifest.utf8).write(to: root.appending(path: "model-downloads.json"))
+        let domain = UUID().uuidString
+        let defaults = try #require(UserDefaults(suiteName: domain))
+        defer { defaults.removePersistentDomain(forName: domain) }
+        let directory = root.appending(path: "models")
+        let models = LocalModels(root: root, downloadDirectory: directory)
+        let downloads = try #require(models.downloads)
+        let requiredGate = AsyncStream<Void>.makeStream()
+        let optionalGate = AsyncStream<Void>.makeStream()
+        let transfer = OptionalModelStart()
+        let capture = FlowCapture()
+        let recognizer = PrewarmTestRecognizer()
+        let app = VoxloomCoordinator(root: root, defaults: defaults, recognizer: { _ in recognizer },
+            capture: { capture }, insertion: .init(foregroundTarget: { nil }, canPost: { false }, paste: { _, _ in false }),
+            activate: {},
+            permissions: .init(isTrusted: { true }, canPostEvents: { true }, microphoneAuthorization: { .authorized }),
+            downloadDirectory: directory, downloadModel: { url, progress in
+                if url.lastPathComponent == "required" {
+                    await transfer.recordRequiredStart()
+                    for await _ in requiredGate.stream { break }
+                } else {
+                    await transfer.record(asrReady: downloads.isInstalled("qwen"))
+                    progress(1, 2)
+                    for await _ in optionalGate.stream { break }
+                }
+                let file = root.appending(path: url.lastPathComponent)
+                try Data("ok".utf8).write(to: file)
+                return file
+            })
+        app.connectViews()
+        defer {
+            requiredGate.continuation.finish()
+            optionalGate.continuation.finish()
+            app.overlay.panel.orderOut(nil)
+        }
+        let content = try #require(app.settingsWindow.window?.contentView)
+        let startupDeadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while await !transfer.requiredStarted && ContinuousClock.now < startupDeadline { await Task.yield() }
+        try #require(await transfer.requiredStarted)
+        #expect(await transfer.asrReady == nil)
+        requiredGate.continuation.finish()
+
+        let optionalDeadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while !containsLabel("Qwen3-4B Instruct 下载中 50%", in: content) && ContinuousClock.now < optionalDeadline {
+            await Task.yield()
+        }
+        #expect(containsLabel("Qwen3-4B Instruct 下载中 50%", in: content))
+        #expect(await transfer.asrReady == true)
+        #expect(!downloads.isInstalled("correction"))
+        app.flow.handle(.start)
+        let recordDeadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while capture.receive == nil && ContinuousClock.now < recordDeadline { await Task.yield() }
+        try #require(capture.receive != nil)
+        capture.receive?([3000, -3000])
+        while app.flow.state?.live.samples.count != 2 && ContinuousClock.now < recordDeadline { await Task.yield() }
+        app.flow.handle(.stop)
+        while !app.flow.canStart && ContinuousClock.now < recordDeadline { await Task.yield() }
+        #expect(app.flow.state?.text == "第一段")
+        #expect(!downloads.isInstalled("correction"))
+
+        let popup = try #require(findButton(labeled: "ASR 上下文提取", in: content) as? NSPopUpButton)
+        #expect(!popup.isEnabled)
+        app.settingsWindow.conversationContext.performClick(nil)
+        #expect(popup.isEnabled)
+        #expect(!downloads.isInstalled("correction"))
+
+        optionalGate.continuation.finish()
+        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while !containsLabel("Qwen3-4B Instruct 已就绪", in: content) && ContinuousClock.now < deadline { await Task.yield() }
+
+        let saved = DictationSettings(defaults: defaults)
+        #expect(saved.summarizesConversation)
+        #expect(!saved.correctsText)
+        #expect(downloads.isInstalled("correction"))
+        #expect(containsLabel("Qwen3-4B Instruct 已就绪", in: content))
+        await app.stop()
+    }
+
     @Test func openingTheAppShowsModelSettingsAndOneAccessibilityAction() async throws {
         _ = NSApplication.shared
         let domain = UUID().uuidString
@@ -628,6 +733,12 @@ import Testing
     return view.subviews.lazy.compactMap { findButton(labeled: label, in: $0) }.first
 }
 
+@MainActor private func containsLabel(_ value: String, in view: NSView) -> Bool {
+    guard !view.isHidden else { return false }
+    if let label = view as? NSTextField, label.stringValue == value { return true }
+    return view.subviews.contains { containsLabel(value, in: $0) }
+}
+
 private struct SampleRecognizer: SpeechRecognizer {
     var text = "示例草稿"
 
@@ -648,4 +759,11 @@ private actor PrewarmTestRecognizer: SpeechRecognizer {
     func transcribe(_ audio: AudioClip, options: RecognitionOptions) async throws -> Transcript {
         .init(text: "第一段")
     }
+}
+
+private actor OptionalModelStart {
+    private(set) var requiredStarted = false
+    private(set) var asrReady: Bool?
+    func recordRequiredStart() { requiredStarted = true }
+    func record(asrReady: Bool) { self.asrReady = asrReady }
 }

@@ -16,7 +16,41 @@ struct ConversationHistory<Element> {
     let text: (Element) -> String?
     let canContinue: () -> Bool
 
-    func read(near input: Element, isCurrent: () -> Bool) -> Result<[String], ConversationReadError> {
+    func readNearbyText(near input: Element, isCurrent: () -> Bool) -> [String] {
+        var branch = input
+        var remainingNodes = 48
+        var remainingBytes = 3072
+        var candidates: [String] = []
+        for _ in 0..<6 {
+            guard let scope = parent(branch), !isSame(branch, scope), canContinue() else { break }
+            let siblings = recentChildren(scope, 12, true)
+            if let position = siblings.firstIndex(where: { isSame($0, branch) }) {
+                var pending = siblings[..<position].suffix(6).map { (element: $0, depth: 1) }
+                while remainingNodes > 0, candidates.count < 12, canContinue(), let node = pending.popLast() {
+                    remainingNodes -= 1
+                    switch kind(node.element) {
+                    case .text:
+                        guard let value = text(node.element), value.utf8.count <= remainingBytes,
+                              !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+                        candidates.append(value)
+                        remainingBytes -= value.utf8.count
+                    case .container, .history:
+                        guard node.depth < 5 else { continue }
+                        pending.append(contentsOf: recentChildren(node.element, 12, true)
+                            .map { (element: $0, depth: node.depth + 1) })
+                    default: break
+                    }
+                }
+            }
+            if kind(scope) == .scopeBoundary || remainingNodes == 0 || candidates.count == 12 { break }
+            branch = scope
+        }
+        guard canContinue(), isCurrent(), canContinue() else { return [] }
+        return candidates.reversed()
+    }
+
+    func read(near input: Element, messageLimit: Int = 6, preservesOriginalText: Bool = false,
+              isCurrent: () -> Bool) -> Result<[String], ConversationReadError> {
         var remaining = 80
         let history: Element
         do {
@@ -30,14 +64,16 @@ struct ConversationHistory<Element> {
         guard let latest = children.last else { return .failure(.noMessageText) }
         var pending = children.map { (element: $0, depth: 1) }
         var messages: [String] = []
-        while let node = pending.popLast(), messages.count < 6, remaining > 0, canContinue() {
+        while messages.count < messageLimit, remaining > 0, canContinue(), let node = pending.popLast() {
             remaining -= 1
             switch kind(node.element) {
             case .text:
                 if let value = text(node.element) {
-                    let excerpt = String(decoding: value.utf8.prefix(320), as: UTF8.self)
+                    let content = preservesOriginalText ? value : String(decoding: value.utf8.prefix(320), as: UTF8.self)
                         .trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !excerpt.isEmpty { messages.append(excerpt) }
+                    if content.utf8.count <= 3072, !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        messages.append(content)
+                    }
                 }
             case .container where node.depth < 6:
                 pending.append(contentsOf: recentChildren(node.element, 12, true)

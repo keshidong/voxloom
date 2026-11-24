@@ -3,6 +3,25 @@ import Testing
 @testable import VoxloomDesktop
 
 struct DictationSettingsTests {
+    @Test func theChatContextModelIsSavedIndependentlyOfCorrection() throws {
+        let identifier = UUID().uuidString
+        let defaults = try #require(UserDefaults(suiteName: identifier))
+        defer { defaults.removePersistentDomain(forName: identifier) }
+
+        defaults.set(["conversationContext": true], forKey: "dictation.settings")
+        let existing = DictationSettings(defaults: defaults)
+        #expect(existing.summarizesConversation)
+        #expect(!DictationSettings().usesConversationContext)
+        defaults.set(["conversationContext": true, "contextModel": "vocabulary"], forKey: "dictation.settings")
+        let selected = DictationSettings(defaults: defaults)
+
+        #expect(existing != selected)
+        #expect(!selected.correctsText)
+        #expect(!selected.summarizesConversation)
+        selected.save(to: defaults)
+        #expect(defaults.dictionary(forKey: "dictation.settings")?["contextModel"] as? String == "vocabulary")
+    }
+
     @Test func recognitionDefaultsToChineseAndKeepsAnExplicitLanguage() throws {
         let identifier = UUID().uuidString
         let defaults = try #require(UserDefaults(suiteName: identifier))

@@ -20,7 +20,29 @@ struct ConversationHistoryTests {
             }, text: { "message \($0)" }, canContinue: { true })
 
         #expect(source.read(near: 2, isCurrent: { true }) == .success((24..<30).map { "message \($0)" }))
+        #expect(source.read(near: 2, messageLimit: 2, isCurrent: { true }) == .success(["message 28", "message 29"]))
         #expect(source.read(near: 2, isCurrent: { false }) == .failure(.targetChanged))
+    }
+
+    @Test func collectsExactTextBeforeTheComposerWithinItsOwnPage() {
+        let children = [0: [1, 7], 1: [8, 2, 6], 8: [3, 4], 2: [5]]
+        let parents = Dictionary(uniqueKeysWithValues: children.flatMap { parent, children in
+            children.map { ($0, parent) }
+        })
+        let values = [3: "先看  Voxloom", 4: "今天继续\n测试 ASR", 5: "输入框", 6: "发送按钮", 7: "其他页面"]
+        let source = ConversationHistory(isSame: ==, parent: { parents[$0] },
+            recentChildren: { node, limit, _ in Array((children[node] ?? []).suffix(limit)) },
+            kind: { node in
+                switch node {
+                case 0, 1: .scopeBoundary
+                case 5, 6: .ignored
+                case 3, 4, 7: .text
+                default: .container
+                }
+            }, text: { values[$0] }, canContinue: { true })
+
+        #expect(source.readNearbyText(near: 2, isCurrent: { true }) == ["先看  Voxloom", "今天继续\n测试 ASR"])
+        #expect(source.readNearbyText(near: 2, isCurrent: { false }).isEmpty)
     }
 
     @Test func skipsAnAmbiguousConversationArea() {

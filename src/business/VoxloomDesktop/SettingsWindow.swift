@@ -5,9 +5,10 @@ import SpeechFoundation
 @MainActor final class SettingsWindow: NSWindowController, NSTextFieldDelegate, NSWindowDelegate {
     let recognition = NSPopUpButton()
     let correction = NSPopUpButton()
+    let contextExtraction = NSPopUpButton()
     let language = NSPopUpButton()
     let vocabulary = NSTextField()
-    let gpu = NSButton(checkboxWithTitle: "使用 GPU 加速 Whisper 和纠错", target: nil, action: nil)
+    let gpu = NSButton(checkboxWithTitle: "使用 GPU 加速 Whisper 和 Qwen3-4B", target: nil, action: nil)
     let inputContext = NSButton(checkboxWithTitle: "用光标附近的文字辅助转写和纠错", target: nil, action: nil)
     let conversationContext = NSButton(checkboxWithTitle: "用当前对话的近期消息辅助转写", target: nil, action: nil)
     let voiceIsolation = NSButton(checkboxWithTitle: "只保留我的声音（实验）", target: nil, action: nil)
@@ -62,20 +63,23 @@ import SpeechFoundation
         hint.textColor = .secondaryLabelColor
         recognition.addItems(withTitles: RecognitionModel.allCases.map(\.title))
         correction.addItems(withTitles: ["Qwen3-4B Instruct", "关闭纠错"])
+        contextExtraction.addItems(withTitles: ContextExtractionModel.allCases.map(\.title))
+        contextExtraction.toolTip = "开启近期消息辅助转写后，可选择提取词汇或总结最近两条消息。"
         language.addItems(withTitles: ["自动", "中文", "English"])
         vocabulary.placeholderString = "术语、人名或产品名"
         vocabulary.delegate = self
         for (control, label) in [(recognition, "转写模型"), (correction, "纠错模型"),
-                                  (language, "语言"), (vocabulary, "词汇提示")] {
+                                  (language, "语言"), (vocabulary, "词汇提示"), (contextExtraction, "ASR 上下文提取")] {
             control.setAccessibilityLabel(label)
         }
-        for control in [recognition, correction, language, gpu, inputContext, conversationContext, voiceIsolation] {
+        for control in [recognition, correction, language, gpu, inputContext, conversationContext, contextExtraction, voiceIsolation] {
             control.target = self
             control.action = #selector(changed)
         }
         let models = NSGridView(views: [
             [NSTextField(labelWithString: "转写模型"), recognition],
             [NSTextField(labelWithString: "纠错模型"), correction],
+            [NSTextField(labelWithString: "ASR 上下文提取"), contextExtraction],
             [NSTextField(labelWithString: "语言"), language],
             [NSTextField(labelWithString: "词汇提示"), vocabulary]
         ])
@@ -154,7 +158,7 @@ import SpeechFoundation
     func updateModelDownloads(_ setup: ModelPreparation, settings: DictationSettings) {
         let model = settings.model
         recognitionDownload.render(model.title, status: setup.status(for: model.rawValue))
-        correctionDownload.render("纠错模型", status: settings.correctsText ? setup.status(for: "correction") : nil)
+        correctionDownload.render("Qwen3-4B Instruct", status: setup.status(for: "correction"))
         isolationDownload.render("人声分离模型", status: settings.usesVoiceIsolation ? setup.status(for: "voiceIsolation") : nil)
         recognitionDownload.onRetry = { [weak self] in self?.onRetryModel?(model.rawValue) }
         correctionDownload.onRetry = { [weak self] in self?.onRetryModel?("correction") }
@@ -246,18 +250,21 @@ import SpeechFoundation
         refreshTriggerControls()
         recognition.selectItem(at: RecognitionModel.allCases.firstIndex(of: settings.model) ?? 0)
         correction.selectItem(at: settings.correctsText ? 0 : 1)
+        contextExtraction.selectItem(at: ContextExtractionModel.allCases.firstIndex(of: settings.contextModel) ?? 0)
         language.selectItem(at: RecognitionLanguage.allCases.firstIndex(of: settings.language) ?? 0)
         vocabulary.stringValue = settings.vocabulary
         gpu.state = settings.usesGPU ? .on : .off
         inputContext.state = settings.usesInputContext ? .on : .off
         conversationContext.state = settings.usesConversationContext ? .on : .off
+        contextExtraction.isEnabled = settings.usesConversationContext
         voiceIsolation.state = settings.usesVoiceIsolation ? .on : .off
     }
 
     func controlTextDidChange(_ notification: Notification) { changed() }
 
     @objc private func changed() {
-        guard recognition.indexOfSelectedItem >= 0, language.indexOfSelectedItem >= 0 else { return }
+        guard recognition.indexOfSelectedItem >= 0, language.indexOfSelectedItem >= 0,
+              contextExtraction.indexOfSelectedItem >= 0 else { return }
         var selected = DictationSettings()
         selected.trigger = trigger
         selected.model = RecognitionModel.allCases[recognition.indexOfSelectedItem]
@@ -267,6 +274,8 @@ import SpeechFoundation
         selected.usesGPU = gpu.state == .on
         selected.usesInputContext = inputContext.state == .on
         selected.usesConversationContext = conversationContext.state == .on
+        contextExtraction.isEnabled = selected.usesConversationContext
+        selected.contextModel = ContextExtractionModel.allCases[contextExtraction.indexOfSelectedItem]
         selected.usesVoiceIsolation = voiceIsolation.state == .on
         onChange?(selected)
     }
