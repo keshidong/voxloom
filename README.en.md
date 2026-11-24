@@ -95,7 +95,7 @@ When a pull request merges into `main`, GitHub Actions increments the patch vers
 
 Use **Actions → Package Voxloom DMG → Run workflow** to select a Release or Debug build manually. Manual builds are available under **Artifacts** for up to 90 days.
 
-Open the DMG and follow the arrow to drag Voxloom into Applications. Dictation is available once the selected ASR model passes SHA-256 verification. The correction and voice isolation models download when enabled. Check download status and retry failed downloads in Settings. Models in `~/Library/Application Support/dev.voxloom.app/Models` are reused across upgrades that require the same model versions.
+Open the DMG and follow the arrow in the Voxloom Installer window to drag Voxloom into Applications. Dictation is available once the selected ASR model passes SHA-256 verification. The correction and voice isolation models download when enabled. Check download status and retry failed downloads in Settings. Models in `~/Library/Application Support/dev.voxloom.app/Models` are reused across upgrades that require the same model versions.
 
 The Release bundle ID is `dev.voxloom.app` and the Debug bundle ID is `dev.voxloom.app.debug`. The app is signed ad hoc and has no Apple notarization.
 

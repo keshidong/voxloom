@@ -9,18 +9,19 @@ import tempfile
 
 
 ROOT = Path(__file__).resolve().parent.parent
+INSTALLER_ART = ROOT / "scripts/dmg"
 
 
-def build_installer_image(image, app, volume_name):
+def build_installer_image(image, app):
     from dmgbuild import build_dmg
 
-    build_dmg(str(image), volume_name, settings={
+    build_dmg(str(image), f"{app.stem} Installer", settings={
         "filesystem": "HFS+",
         "format": "ULFO",
         "files": [str(app)],
         "symlinks": {"Applications": "/Applications"},
-        "icon": str(app / "Contents/Resources/AppIcon.icns"),
-        "background": str(ROOT / "scripts/dmg/install-background.tiff"),
+        "icon": str(INSTALLER_ART / "install-volume.icns"),
+        "background": str(INSTALLER_ART / "install-background.tiff"),
         "default_view": "icon-view",
         "window_rect": ((150, 150), (640, 340)),
         "icon_size": 104,
@@ -51,7 +52,7 @@ def package_disk_image(configuration, output, voice_isolation, version=None, bui
             command.extend(["--build-number", build_number])
         subprocess.run(command, cwd=ROOT, check=True)
         image = Path(image_directory) / output.name
-        build_installer_image(image, app, app_name)
+        build_installer_image(image, app)
         subprocess.run(["hdiutil", "verify", "-quiet", str(image)], check=True)
         image.replace(output)
 

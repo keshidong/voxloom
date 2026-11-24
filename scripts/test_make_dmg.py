@@ -20,11 +20,11 @@ class DiskImagePackagingTest(unittest.TestCase):
             layouts = []
 
             def build_disk_image(image, volume_name, *, settings):
-                self.assertEqual(volume_name, "Voxloom Debug")
+                self.assertEqual(volume_name, "Voxloom Debug Installer")
                 self.assertEqual(Path(settings["files"][0]).name, app_name)
                 self.assertTrue(Path(settings["files"][0]).is_dir())
-                self.assertEqual(Path(settings["icon"]), Path(settings["files"][0]) / "Contents/Resources/AppIcon.icns")
-                self.assertEqual(Path(settings["icon"]).read_bytes(), b"app icon")
+                self.assertEqual(Path(settings["icon"]), SCRIPT.parent / "dmg/install-volume.icns")
+                self.assertEqual(Path(settings["icon"]).read_bytes()[:4], b"icns")
                 self.assertEqual(settings["symlinks"], {"Applications": "/Applications"})
                 self.assertTrue(Path(settings["background"]).is_file())
                 self.assertEqual(settings["default_view"], "icon-view")
@@ -44,9 +44,7 @@ class DiskImagePackagingTest(unittest.TestCase):
                     self.assertIn("--external-models", command)
                     self.assertEqual(command[command.index("--version") + 1], "0.1.2")
                     self.assertEqual(command[command.index("--build-number") + 1], "14")
-                    resources = app / "Contents/Resources"
-                    resources.mkdir(parents=True)
-                    (resources / "AppIcon.icns").write_bytes(b"app icon")
+                    app.mkdir()
                 else:
                     self.assertEqual(command[:2], ["hdiutil", "verify"])
                     self.assertFalse(output.exists())
