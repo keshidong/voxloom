@@ -94,11 +94,14 @@ jobs:
 
       - name: Build and verify DMG
         run: |
+          python3 -m venv "$RUNNER_TEMP/voxloom-dmg-tools"
+          dmg_python="$RUNNER_TEMP/voxloom-dmg-tools/bin/python"
+          "$dmg_python" -m pip install --disable-pip-version-check -r scripts/dmg/requirements.txt
           version_args=()
           if [ -n "$RELEASE_TAG" ]; then
             version_args+=(--version "${RELEASE_TAG#v}" --build-number "$GITHUB_RUN_NUMBER")
           fi
-          python3 scripts/make-dmg.py --configuration "$CONFIGURATION" --voice-isolation \
+          "$dmg_python" scripts/make-dmg.py --configuration "$CONFIGURATION" --voice-isolation \
             --output "$RUNNER_TEMP/Voxloom-${CONFIGURATION}-arm64.dmg" "${version_args[@]}"
 
       - name: Upload DMG
