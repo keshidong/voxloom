@@ -29,5 +29,11 @@ struct LocalModels {
         try WAVCodec.decode(Data(contentsOf: file(settings.language == .english ? "english.wav" : "chinese.wav")))
     }
 
+    func voiceIsolator() -> VoiceIsolator? {
+        let executable = file("voice-isolation-runtime/voice-isolation")
+        guard FileManager.default.isExecutableFile(atPath: executable.path) else { return nil }
+        return VoiceIsolator(executable: executable)
+    }
+
     private func file(_ name: String) -> URL { root.appendingPathComponent(name) }
 }

@@ -17,8 +17,16 @@ def main():
     parser.add_argument("-c", "--configuration", choices=("debug", "release"), default="release")
     parser.add_argument("--output")
     parser.add_argument("--bundle-id")
+    parser.add_argument("--voice-isolation", action="store_true",
+                        help="Include the prepared offline voice isolation runtime in Voxloom")
     arguments = parser.parse_args()
     standalone = arguments.product == "voxloom"
+    isolation_runtime = ROOT / ".runtime/voice-isolation-runtime"
+    if arguments.voice_isolation:
+        if not standalone:
+            parser.error("--voice-isolation requires --product voxloom")
+        if not (isolation_runtime / "voice-isolation").is_file():
+            parser.error("Run python3 scripts/prepare-voice-isolation.py first")
     name = "Voxloom" if standalone else "voxloom 0.3.2"
     identifier = "dev.voxloom.app" if standalone else "dev.voxloom.demo.v032"
     if arguments.configuration == "debug":
@@ -76,6 +84,12 @@ def main():
     # Resolve staging links so the application has no dependency on the workspace.
     shutil.copytree(ROOT / ".runtime/qwen-asr-runtime", resources / "qwen-asr-runtime",
                     symlinks=False, dirs_exist_ok=True, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    isolation_destination = resources / "voice-isolation-runtime"
+    if isolation_destination.exists():
+        shutil.rmtree(isolation_destination)
+    if arguments.voice_isolation:
+        shutil.copytree(isolation_runtime, isolation_destination,
+                        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     info = {
         "CFBundleName": app.stem, "CFBundleDisplayName": app.stem,
         "CFBundleExecutable": arguments.product, "CFBundleIdentifier": bundle_id,

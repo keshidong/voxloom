@@ -15,6 +15,7 @@ public actor QwenASRRecognizer: SpeechRecognizer {
     let factory: @Sendable () -> any JSONWorkerRunning
     let temporaryDirectory: URL
     private var worker: (any JSONWorkerRunning)?
+    private var preparation: Task<Void, Never>?
     private var busy = false
     public init(configuration: QwenASRConfiguration) {
         self.configuration = configuration
@@ -25,6 +26,26 @@ public actor QwenASRRecognizer: SpeechRecognizer {
         self.configuration = configuration; self.temporaryDirectory = temporaryDirectory; self.factory = factory
     }
     deinit { worker?.close() }
+
+    public func prepare() async {
+        if let preparation { await preparation.value; return }
+        guard !Task.isCancelled, !busy, worker == nil,
+              (try? validateResources()) != nil else { return }
+        let candidate = factory()
+        let preparation = Task { [self] in
+            do {
+                try await candidate.prepare(within: min(configuration.timeout, .seconds(30)))
+                try Task.checkCancellation()
+                worker = candidate
+            } catch {
+                await candidate.shutdown()
+            }
+            self.preparation = nil
+        }
+        self.preparation = preparation
+        await preparation.value
+    }
+
     public func transcribe(_ audio: AudioClip, options: RecognitionOptions) async throws -> Transcript {
         try Task.checkCancellation()
         guard !busy else { throw RecognitionError.busy }
@@ -32,13 +53,12 @@ public actor QwenASRRecognizer: SpeechRecognizer {
         // Digital silence has no linguistic content. Do not ask a generative
         // decoder to invent a transcript for it; quiet speech is preserved.
         if audio.samples.allSatisfy({ $0 == 0 }) { return Transcript(text: "") }
-        guard configuration.executable.isFileURL, configuration.model.isFileURL, configuration.timeout > .zero,
-              options.context.utf8.count <= 4096 else { throw RecognitionError.invalidConfiguration }
-        guard FileManager.default.isExecutableFile(atPath: configuration.executable.path) else { throw RecognitionError.engineUnavailable }
-        guard FileManager.default.isReadableFile(atPath: configuration.model.appendingPathComponent("model.safetensors").path)
-        else { throw RecognitionError.modelUnavailable }
+        guard options.context.utf8.count <= 4096 else { throw RecognitionError.invalidConfiguration }
+        try validateResources()
         busy = true
         defer { busy = false }
+        await preparation?.value
+        try Task.checkCancellation()
         let job = temporaryDirectory.appendingPathComponent("qwen-asr-" + UUID().uuidString)
         do { try FileManager.default.createDirectory(at: job, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700]) }
         catch { throw RecognitionError.fileAccess }
@@ -69,6 +89,20 @@ public actor QwenASRRecognizer: SpeechRecognizer {
             throw error
         }
     }
-    public func shutdown() async { await worker?.shutdown(); worker = nil }
+    public func shutdown() async {
+        preparation?.cancel()
+        await preparation?.value
+        await worker?.shutdown()
+        worker = nil
+    }
+
+    private func validateResources() throws {
+        guard configuration.executable.isFileURL, configuration.model.isFileURL, configuration.timeout > .zero
+        else { throw RecognitionError.invalidConfiguration }
+        guard FileManager.default.isExecutableFile(atPath: configuration.executable.path)
+        else { throw RecognitionError.engineUnavailable }
+        guard FileManager.default.isReadableFile(atPath: configuration.model.appendingPathComponent("model.safetensors").path)
+        else { throw RecognitionError.modelUnavailable }
+    }
     private struct Request: Encodable { let audio: String; let language: String; let context: String }
 }

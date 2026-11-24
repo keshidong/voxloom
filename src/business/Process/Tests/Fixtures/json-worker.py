@@ -4,6 +4,9 @@ import sys
 import time
 
 mode = sys.argv[1] if len(sys.argv) > 1 else "normal"
+if mode == "mark-start":
+    with open(sys.argv[2], "w") as marker:
+        marker.write(str(os.getpid()))
 if mode == "bad-ready":
     print('{"ready":false}', flush=True)
 elif mode == "malformed-ready":

@@ -12,6 +12,8 @@ public struct LiveState: Sendable, Equatable {
     public var submitted = 0
     public var busy = false
     public var hasVoice = false
+    fileprivate var submissionIsFinal = false
+    fileprivate var previewFailed = false
     public init() {}
     public var seconds: Double { Double(samples.count) / Double(AudioClip.sampleRate) }
 }
@@ -23,6 +25,7 @@ public enum LiveEvent: Sendable {
     case pulse
     case stop
     case result(Int, Int, String)
+    case previewFailed(Int, Int)
     case failed(Int, String)
     case cancel
     case clear
@@ -42,21 +45,24 @@ public struct LiveTransition: Sendable {
 }
 
 public enum LiveReducer {
-    public static func reduce(_ previous: LiveState, _ event: LiveEvent) -> LiveTransition {
+    public static func reduce(_ previous: LiveState, _ event: LiveEvent,
+                              recognizesWhileRecording: Bool = true, requiresFinalRecognition: Bool = false) -> LiveTransition {
         let firstPreviewSamples = AudioClip.sampleRate
         let refreshSamples = AudioClip.sampleRate / 2
         var state = previous
         var effects: [LiveEffect] = []
         func submit() {
-            guard !state.busy, state.hasVoice, !state.samples.isEmpty else { return }
+            let isFinal = state.phase == .finishing
+            guard !state.busy, state.hasVoice, !state.samples.isEmpty, isFinal || !state.previewFailed else { return }
             state.busy = true
+            state.submissionIsFinal = isFinal
             state.submitted = state.samples.count
             effects.append(.recognize(state.session, state.samples))
         }
         func finish() {
             state.level = 0
             effects.append(.stopCapture)
-            if !state.hasVoice || (!state.busy && state.submitted == state.samples.count) {
+            if !state.hasVoice || (!requiresFinalRecognition && !state.busy && state.submitted == state.samples.count) {
                 state.phase = .idle
             } else {
                 state.phase = .finishing
@@ -77,16 +83,23 @@ public enum LiveReducer {
             state.level = samples.isEmpty ? 0 : sqrt(samples.reduce(0.0) { $0 + pow(Double($1) / 32768, 2) } / Double(samples.count))
             state.hasVoice = state.hasVoice || state.level > 0.002
             if state.samples.count == AudioClip.maximumSamples { finish() }
-            else if state.submitted == 0 && state.samples.count >= firstPreviewSamples { submit() }
+            else if recognizesWhileRecording && state.submitted == 0 && state.samples.count >= firstPreviewSamples { submit() }
         case .pulse where state.phase == .recording:
-            if state.submitted > 0 && state.samples.count - state.submitted >= refreshSamples { submit() }
+            if recognizesWhileRecording && state.submitted > 0 && state.samples.count - state.submitted >= refreshSamples { submit() }
         case .result(let session, let revision, let text) where session == state.session && state.busy && revision == state.submitted:
             state.text = text
             state.busy = false
             if state.phase == .finishing {
-                if state.submitted == state.samples.count { state.phase = .idle }
+                if state.submitted == state.samples.count && (!requiresFinalRecognition || state.submissionIsFinal) {
+                    state.phase = .idle
+                }
                 else { submit() }
             } else if state.samples.count - state.submitted >= refreshSamples { submit() }
+        case .previewFailed(let session, let revision)
+            where session == state.session && state.busy && revision == state.submitted && !state.submissionIsFinal:
+            state.previewFailed = true
+            state.busy = false
+            if state.phase == .finishing { submit() }
         case .stop where state.phase == .recording:
             finish()
         case .failed(let session, let message) where session == state.session && state.phase != .idle:

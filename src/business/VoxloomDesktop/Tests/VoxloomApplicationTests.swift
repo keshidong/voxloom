@@ -7,6 +7,181 @@ import Testing
 @testable import VoxloomDesktop
 
 @MainActor @Suite(.serialized) struct VoxloomApplicationTests {
+    @Test func launchingPreparesTheSelectedEngineWithoutStartingCapture() async throws {
+        _ = NSApplication.shared
+        let suite = UUID().uuidString
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let capture = FlowCapture()
+        let engine = PrewarmTestRecognizer()
+        var factoryCalls = 0
+        let app = VoxloomCoordinator(root: FileManager.default.temporaryDirectory, defaults: defaults,
+            recognizer: { _ in factoryCalls += 1; return engine }, capture: { capture }, activate: {},
+            permissions: .init(isTrusted: { false }, canPostEvents: { false }))
+        app.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
+        defer { app.overlay.panel.orderOut(nil) }
+        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while await engine.prepares == 0 && ContinuousClock.now < deadline { await Task.yield() }
+        #expect(await engine.prepares == 1)
+        #expect(factoryCalls == 1)
+        #expect(capture.receive == nil)
+        #expect(app.flow.canStart)
+
+        app.flow.handle(.start)
+        let captureDeadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while capture.receive == nil && ContinuousClock.now < captureDeadline { await Task.yield() }
+        #expect(capture.receive != nil)
+        #expect(factoryCalls == 1)
+        await app.stop()
+    }
+
+    @Test func settingsShowsABilingualSentenceToReadDuringEnrollment() throws {
+        _ = NSApplication.shared
+        let settings = SettingsWindow(settings: DictationSettings())
+        let content = try #require(settings.window?.contentView)
+        content.layoutSubtreeIfNeeded()
+
+        func textFields(in view: NSView) -> [NSTextField] {
+            view.subviews.flatMap { subview in
+                if let field = subview as? NSTextField { return [field] }
+                return textFields(in: subview)
+            }
+        }
+
+        let example = try #require(textFields(in: content).first {
+            $0.stringValue == "今天我想试试语音输入。Can you hear me clearly?"
+        })
+        #expect(!example.isHiddenOrHasHiddenAncestor)
+        #expect(!example.bounds.isEmpty)
+        #expect(content.bounds.contains(example.convert(example.bounds, to: content)))
+    }
+
+    @Test func settingsPlaysAndStopsSavedVoiceSamples() async throws {
+        _ = NSApplication.shared
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = VoiceSampleStore(directory: root.appendingPathComponent("samples"))
+        let clip = try AudioClip(samples: Array(repeating: 350, count: VoiceEnrollment.minimumSamples))
+        try store.write(clip, for: .normal)
+        let suite = UUID().uuidString
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let player = TestVoiceSamplePlayer()
+        let app = VoxloomCoordinator(root: root, defaults: defaults, activate: {},
+            voiceSampleDirectory: store.directory, voiceSamplePlayer: player)
+        app.connectViews()
+        defer { app.overlay.panel.orderOut(nil) }
+        let window = try #require(app.settingsWindow.window)
+        let content = try #require(window.contentView)
+        let normal = try #require(findButton(labeled: "试听正常样本", in: content))
+        let loud = try #require(findButton(labeled: "试听大声样本", in: content))
+        #expect(normal.isEnabled)
+        #expect(!loud.isEnabled)
+
+        normal.performClick(nil)
+        #expect(player.audio == clip)
+        #expect(normal.title == "停止")
+        normal.performClick(nil)
+        #expect(player.audio == nil)
+        #expect(normal.title == "试听")
+
+        normal.performClick(nil)
+        player.finish()
+        #expect(normal.title == "试听")
+        normal.performClick(nil)
+        window.close()
+        #expect(player.audio == nil)
+        await app.stop()
+    }
+
+    @Test func isolationSwitchPersistsAndRequiresAnEnrolledVoiceWhenEnabled() async throws {
+        _ = NSApplication.shared
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let runtime = root.appendingPathComponent("voice-isolation-runtime")
+        try FileManager.default.createDirectory(at: runtime, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let worker = runtime.appendingPathComponent("voice-isolation")
+        try Data().write(to: worker)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: worker.path)
+        let suite = UUID().uuidString
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let app = VoxloomCoordinator(root: root, defaults: defaults, activate: {},
+            voiceSampleDirectory: root.appendingPathComponent("samples"))
+        app.connectViews()
+        defer { app.overlay.panel.orderOut(nil) }
+
+        let toggle = app.settingsWindow.voiceIsolation
+        #expect(toggle.state == .off)
+        #expect(!toggle.isHiddenOrHasHiddenAncestor)
+        toggle.performClick(nil)
+        #expect(DictationSettings(defaults: defaults).usesVoiceIsolation)
+        app.flow.handle(.start)
+        #expect(app.flow.notice == "先在设置里录一段你的声音")
+        toggle.performClick(nil)
+        #expect(!DictationSettings(defaults: defaults).usesVoiceIsolation)
+        await app.stop()
+    }
+
+    @Test func heldDictationPreviewsIsolatedAudioAndInsertsOnlyTheBatchResult() async throws {
+        _ = NSApplication.shared
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let runtime = root.appendingPathComponent("voice-isolation-runtime")
+        try FileManager.default.createDirectory(at: runtime, withIntermediateDirectories: true)
+        let worker = runtime.appendingPathComponent("voice-isolation")
+        try """
+        #!/bin/sh
+        printf '%s\\n' '{"ready":true}'
+        while IFS= read -r request; do
+            output=$(printf '%s' "$request" | /usr/bin/plutil -extract output raw -o - -- -) || exit 1
+            if printf '%s' "$request" | /usr/bin/plutil -extract previewSession raw -o - -- - >/dev/null 2>&1; then
+                /bin/cp "$(dirname "$0")/preview.wav" "$output" || exit 2
+            else
+                /bin/cp "$(dirname "$0")/final.wav" "$output" || exit 3
+            fi
+            printf '%s\\n' '{"ok":true}'
+        done
+        """.write(to: worker, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: worker.path)
+        let raw = Array(repeating: Int16(1000), count: AudioClip.sampleRate)
+        try WAVCodec.encode(AudioClip(samples: [111])).write(to: runtime.appendingPathComponent("preview.wav"))
+        try WAVCodec.encode(AudioClip(samples: Array(repeating: 222, count: raw.count)))
+            .write(to: runtime.appendingPathComponent("final.wav"))
+        let store = VoiceSampleStore(directory: root.appendingPathComponent("samples"))
+        try store.write(AudioClip(samples: raw + raw + raw), for: .normal)
+        let suite = UUID().uuidString
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        var settings = DictationSettings()
+        settings.usesVoiceIsolation = true
+        settings.save(to: defaults)
+        let capture = FlowCapture()
+        var pasted: [String] = []
+        let app = VoxloomCoordinator(root: root, defaults: defaults, recognizer: { _ in IsolationTestRecognizer() },
+            capture: { capture }, insertion: .init(foregroundTarget: { 101 }, canPost: { true },
+                paste: { text, _ in pasted.append(text); return true }, captureFocus: { _ in { true } }),
+            activate: {}, voiceSampleDirectory: store.directory)
+        app.connectViews()
+        defer { app.overlay.panel.orderOut(nil) }
+        func waitFor(_ condition: () -> Bool) async throws {
+            let deadline = ContinuousClock.now.advanced(by: .seconds(4))
+            while !condition() && ContinuousClock.now < deadline { await Task.yield() }
+            try #require(condition())
+        }
+
+        app.flow.handle(.start)
+        try await waitFor { capture.receive != nil }
+        capture.receive?(raw)
+        try await waitFor { app.flow.state?.live.text == "预览" }
+        #expect(app.flow.state?.live.phase == .recording)
+        #expect(pasted.isEmpty)
+        app.flow.handle(.stop)
+        try await waitFor { !pasted.isEmpty }
+        #expect(pasted == ["整段定稿"])
+        await app.stop()
+    }
+
     enum EditShortcutOutcome: CaseIterable { case finishEditing, cancel }
 
     @Test(arguments: EditShortcutOutcome.allCases)
@@ -302,5 +477,19 @@ private struct SampleRecognizer: SpeechRecognizer {
 
     func transcribe(_ audio: AudioClip, options: RecognitionOptions) async throws -> Transcript {
         .init(text: text)
+    }
+}
+
+private struct IsolationTestRecognizer: SpeechRecognizer {
+    func transcribe(_ audio: AudioClip, options: RecognitionOptions) async throws -> Transcript {
+        .init(text: audio.samples.first == 111 ? "预览" : "整段定稿")
+    }
+}
+
+private actor PrewarmTestRecognizer: SpeechRecognizer {
+    private(set) var prepares = 0
+    func prepare() async { prepares += 1 }
+    func transcribe(_ audio: AudioClip, options: RecognitionOptions) async throws -> Transcript {
+        .init(text: "第一段")
     }
 }

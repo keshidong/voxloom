@@ -23,6 +23,7 @@ struct DictationSettings: Equatable {
     var usesGPU = true
     var usesInputContext = true
     var usesConversationContext = false
+    var usesVoiceIsolation = false
     var vocabulary = ""
 
     init() {}
@@ -35,6 +36,7 @@ struct DictationSettings: Equatable {
         usesGPU = saved?["gpu"] as? Bool ?? true
         usesInputContext = saved?["inputContext"] as? Bool ?? true
         usesConversationContext = saved?["conversationContext"] as? Bool ?? usesConversationContext
+        usesVoiceIsolation = saved?["voiceIsolation"] as? Bool ?? usesVoiceIsolation
         vocabulary = saved?["vocabulary"] as? String ?? ""
     }
 
@@ -42,7 +44,7 @@ struct DictationSettings: Equatable {
         defaults.set([
             "model": model.rawValue, "language": language.rawValue, "correction": correctsText,
             "gpu": usesGPU, "vocabulary": vocabulary, "inputContext": usesInputContext,
-            "conversationContext": usesConversationContext
+            "conversationContext": usesConversationContext, "voiceIsolation": usesVoiceIsolation
         ], forKey: Self.key)
     }
 
