@@ -25,6 +25,8 @@ class DiskImagePackagingTest(unittest.TestCase):
                     self.assertEqual(app.name, app_name)
                     self.assertIn("--voice-isolation", command)
                     self.assertIn("--external-models", command)
+                    self.assertEqual(command[command.index("--version") + 1], "0.1.2")
+                    self.assertEqual(command[command.index("--build-number") + 1], "14")
                     app.mkdir()
                 elif command[:2] == ["hdiutil", "create"]:
                     source = Path(command[command.index("-srcfolder") + 1])
@@ -39,6 +41,7 @@ class DiskImagePackagingTest(unittest.TestCase):
 
             with patch.object(sys, "argv", [
                 str(SCRIPT), "--configuration", "debug", "--voice-isolation", "--output", str(output),
+                "--version", "0.1.2", "--build-number", "14",
             ]), patch.object(subprocess, "run", side_effect=run_command):
                 runpy.run_path(str(SCRIPT), run_name="__main__")
 

@@ -36,7 +36,19 @@ run_group() {
     fi
 }
 
-run_group modules --no-parallel --skip 'WhisperE2ETests|QwenE2ETests|QwenASRE2ETests|QwenCorrectionCorpusE2ETests|realWhisperCommandLine|DemoWindowTests|VoxloomApplicationTests|VoxloomDraftApplicationTests|VoxloomPanelTests'
+module_exclusions='WhisperE2ETests|QwenE2ETests|QwenASRE2ETests|QwenCorrectionCorpusE2ETests|realWhisperCommandLine|DemoWindowTests|VoxloomApplicationTests|VoxloomDraftApplicationTests|VoxloomPanelTests'
+test_list="$(bash scripts/swift-command.sh test list)"
+targets="$(printf '%s\n' "$test_list" | awk -F. -v skip="$module_exclusions" \
+    '$0 !~ skip && /^[[:alnum:]_]+\.[[:alnum:]_]+\// { print $1 }' | sort -u)"
+if [ -z "$targets" ]; then
+    printf '%s\n' 'No Swift module tests were discovered.' >&2
+    exit 1
+fi
+
+while IFS= read -r target; do
+    run_group "$target" --skip-build --no-parallel --filter "^${target}\\." --skip "$module_exclusions"
+done <<< "$targets"
+
 run_group demo-window --skip-build --no-parallel --filter '^DesktopTests\.DemoWindowTests/'
 run_group desktop-application --skip-build --no-parallel --filter '^VoxloomDesktopTests\.VoxloomApplicationTests/'
 run_group desktop-draft --skip-build --no-parallel --filter '^VoxloomDesktopTests\.VoxloomDraftApplicationTests/'

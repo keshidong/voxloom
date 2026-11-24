@@ -2,7 +2,7 @@ name: Package Voxloom DMG
 
 on:
   push:
-    tags: ['v*']
+    branches: [main]
   workflow_dispatch:
     inputs:
       configuration:
@@ -16,12 +16,57 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.event_name == 'push' && 'voxloom-release' || github.run_id }}
+  queue: max
+
 jobs:
+  version:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: read
+    outputs:
+      tag: ${{ steps.reserve.outputs.tag }}
+    steps:
+      - name: Check out the merged commit and release tags
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Reserve a version for the merged pull request
+        id: reserve
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          pr=$(gh api --paginate "repos/$GH_REPO/commits/$GITHUB_SHA/pulls" | jq -sr --arg sha "$GITHUB_SHA" '
+            first(.[][] | select(.base.ref == "main" and .merged_at != null and .merge_commit_sha == $sha))
+            | .number // empty')
+          if [ -z "$pr" ]; then
+            echo "No merged pull request for $GITHUB_SHA." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          tag=$(python3 scripts/release-version.py)
+          if ! git show-ref --verify --quiet "refs/tags/$tag"; then
+            gh api --method POST "repos/$GH_REPO/git/refs" -f "ref=refs/tags/$tag" -f "sha=$GITHUB_SHA" --silent
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "PR #$pr is assigned version $tag." >> "$GITHUB_STEP_SUMMARY"
+
   package:
+    needs: version
+    if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || needs.version.outputs.tag != '') }}
     runs-on: macos-15
     timeout-minutes: 60
     env:
       CONFIGURATION: ${{ inputs.configuration || 'release' }}
+      RELEASE_TAG: ${{ needs.version.outputs.tag }}
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
       UV_NO_CACHE: 'true'
     defaults:
@@ -49,8 +94,12 @@ jobs:
 
       - name: Build and verify DMG
         run: |
+          version_args=()
+          if [ -n "$RELEASE_TAG" ]; then
+            version_args+=(--version "${RELEASE_TAG#v}" --build-number "$GITHUB_RUN_NUMBER")
+          fi
           python3 scripts/make-dmg.py --configuration "$CONFIGURATION" --voice-isolation \
-            --output "$RUNNER_TEMP/Voxloom-${CONFIGURATION}-arm64.dmg"
+            --output "$RUNNER_TEMP/Voxloom-${CONFIGURATION}-arm64.dmg" "${version_args[@]}"
 
       - name: Upload DMG
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -62,8 +111,8 @@ jobs:
           retention-days: 90
 
   publish:
-    if: github.event_name == 'push' && github.ref_type == 'tag'
-    needs: package
+    if: github.event_name == 'push' && needs.version.outputs.tag != ''
+    needs: [version, package]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -76,7 +125,9 @@ jobs:
 
       - name: Publish DMG to GitHub Releases
         env:
+          GH_REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.version.outputs.tag }}
         run: |
           asset=Voxloom-release-arm64.dmg
           dmg="distribution/$asset"
@@ -84,12 +135,13 @@ jobs:
             echo "::error::Release requires a nonempty DMG smaller than 2 GiB."
             exit 1
           fi
-          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json assets \
-            --jq '.assets[].name' > "$RUNNER_TEMP/release-assets"; then
-            if ! grep -Fxq "$asset" "$RUNNER_TEMP/release-assets"; then
-              gh release upload "$GITHUB_REF_NAME" "$dmg" --repo "$GITHUB_REPOSITORY"
+          if release=$(gh release view "$RELEASE_TAG" --json assets,isDraft); then
+            if ! jq -e --arg asset "$asset" 'any(.assets[]; .name == $asset)' <<< "$release" >/dev/null; then
+              gh release upload "$RELEASE_TAG" "$dmg"
+            fi
+            if jq -e '.isDraft' <<< "$release" >/dev/null; then
+              gh release edit "$RELEASE_TAG" --draft=false
             fi
           else
-            gh release create "$GITHUB_REF_NAME" "$dmg" --repo "$GITHUB_REPOSITORY" \
-              --verify-tag --generate-notes
+            gh release create "$RELEASE_TAG" "$dmg" --verify-tag --generate-notes
           fi
