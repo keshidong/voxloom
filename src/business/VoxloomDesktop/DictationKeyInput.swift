@@ -55,6 +55,7 @@ import RxSwift
     typealias RemoveMonitor = @MainActor () -> Void
     typealias ObserveGlobal = @MainActor (@escaping (NSEvent) -> Void) -> RemoveMonitor?
     typealias FilterGlobal = @MainActor (@escaping (NSEvent) -> Bool, @escaping () -> Void) -> RemoveMonitor?
+    private enum Hold: Equatable { case key(UInt16), modifiers }
     private static let keyboardEvents: NSEvent.EventTypeMask = [.flagsChanged, .keyDown]
     private let input: DictationKeyInput
     private let isTrusted: () -> Bool
@@ -65,7 +66,7 @@ import RxSwift
     private var consumedKeys: Set<UInt16> = []
     private var trigger: DictationTrigger = .fn
     private var selectingTrigger = false
-    private var heldKey: UInt16?
+    private var hold: Hold?
     var isGlobal: Bool { global != nil }
 
     init(input: DictationKeyInput, isTrusted: @escaping () -> Bool,
@@ -106,7 +107,7 @@ import RxSwift
         guard trigger != value else { return }
         trigger = value
         cancelHold()
-        if trigger.modifier == nil, global?.filtersEvents == false { removeGlobal() }
+        if !trigger.isModifierOnly, global?.filtersEvents == false { removeGlobal() }
         refresh()
     }
 
@@ -135,7 +136,7 @@ import RxSwift
             global = (id, true, remove)
             return
         }
-        guard global == nil, trigger.modifier != nil else { return }
+        guard global == nil, trigger.isModifierOnly else { return }
         // AppKit sends global observers only events addressed to other apps.
         let remove = observeGlobal { [weak self] event in
             MainActor.assumeIsolated {
@@ -156,10 +157,7 @@ import RxSwift
     private func filter(_ event: NSEvent) -> Bool {
         switch event.type {
         case .keyUp:
-            if heldKey == event.keyCode {
-                heldKey = nil
-                input.changed(down: false, at: event.timestamp)
-            }
+            if hold == .key(event.keyCode) { releaseHold(at: event.timestamp) }
             return consumedKeys.remove(event.keyCode) != nil
         case .keyDown:
             guard !selectingTrigger else { return false }
@@ -167,10 +165,9 @@ import RxSwift
                 if consumedKeys.contains(event.keyCode) { return true }
             } else {
                 consumedKeys.remove(event.keyCode)
-                if trigger.modifier == nil, event.keyCode == trigger.keyCode, trigger.permits(event.modifierFlags) {
-                    heldKey = event.keyCode
+                if !trigger.isModifierOnly, event.keyCode == trigger.keyCode, trigger.permits(event.modifierFlags) {
                     consumedKeys.insert(event.keyCode)
-                    input.changed(down: true, at: event.timestamp)
+                    beginHold(.key(event.keyCode), at: event.timestamp)
                     return true
                 }
                 if trigger.permits(event.modifierFlags),
@@ -196,22 +193,46 @@ import RxSwift
     func receive(_ event: NSEvent) {
         guard !selectingTrigger else { return }
         switch event.type {
-        case .flagsChanged:
-            guard event.keyCode == trigger.keyCode, let modifier = trigger.modifier else {
-                cancelHold()
-                return
-            }
-            let down = modifier.isPressed(event.modifierFlags)
-            guard !down || trigger.permits(event.modifierFlags) else { cancelHold(); return }
-            input.changed(down: down, at: event.timestamp)
+        case .flagsChanged: modifierChanged(event)
         case .keyDown:
             cancelHold()
         default: break
         }
     }
 
+    private func modifierChanged(_ event: NSEvent) {
+        let flags = event.modifierFlags
+        if !trigger.requiredModifiers.isEmpty {
+            if hold != nil {
+                if !trigger.hasRequiredModifiers(flags) { releaseHold(at: event.timestamp) }
+                else if !trigger.permits(flags) { cancelHold() }
+            } else if trigger.permits(flags), trigger.isModifierCombinationPress(event) {
+                beginHold(.modifiers, at: event.timestamp)
+            }
+            return
+        }
+
+        guard event.keyCode == trigger.keyCode, let modifier = trigger.modifier else {
+            cancelHold()
+            return
+        }
+        if !modifier.isPressed(flags) { releaseHold(at: event.timestamp) }
+        else if trigger.permits(flags) { beginHold(.modifiers, at: event.timestamp) }
+        else { cancelHold() }
+    }
+
+    private func beginHold(_ value: Hold, at timestamp: TimeInterval) {
+        hold = value
+        input.changed(down: true, at: timestamp)
+    }
+
+    private func releaseHold(at timestamp: TimeInterval) {
+        hold = nil
+        input.changed(down: false, at: timestamp)
+    }
+
     private func cancelHold() {
-        heldKey = nil
+        hold = nil
         input.interrupt()
     }
 

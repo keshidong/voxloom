@@ -7,6 +7,32 @@ import Testing
 @testable import VoxloomDesktop
 
 @MainActor struct KeyboardBoundaryTests {
+    @Test func modifierCombinationsAreNamedAndSavedWithOrWithoutARegularKey() throws {
+        let all: NSEvent.ModifierFlags = [.control, .option, .shift, .command]
+        let keyPress = try keyEvent(.keyDown, key: kVK_F6, flags: all)
+        let keyCombination = try #require(DictationTrigger(capturing: keyPress))
+        #expect(keyCombination.name == "⌃⌥⇧⌘F6")
+        #expect(keyCombination.stored["keyCode"] == nil)
+        #expect(keyCombination.permits(all))
+        #expect(!keyCombination.permits([.control, .option, .command]))
+
+        let modifiers = try keyEvent(.flagsChanged, key: kVK_RightOption, flags: [.option, .command])
+        let modifierCombination = try #require(DictationTrigger(capturing: modifiers))
+        #expect(modifierCombination.name == "⌥⌘")
+        #expect(!modifierCombination.permits(.option))
+        #expect(!modifierCombination.permits([.option, .command, .shift]))
+
+        let domain = UUID().uuidString
+        let defaults = try #require(UserDefaults(suiteName: domain))
+        defer { defaults.removePersistentDomain(forName: domain) }
+        for combination in [keyCombination, modifierCombination] {
+            var settings = DictationSettings()
+            settings.trigger = combination
+            settings.save(to: defaults)
+            #expect(DictationSettings(defaults: defaults).trigger == combination)
+        }
+    }
+
     @Test func chosenFunctionKeyIsSavedAndConsumesAnUnmodifiedHoldAndRelease() throws {
         _ = NSApplication.shared
         let origin = Date(timeIntervalSince1970: 0)
@@ -43,6 +69,117 @@ import Testing
         #expect(deliver(try keyEvent(.keyDown, key: kVK_F6, repeated: true)))
         #expect(deliver(release))
         #expect(actions == [.start, .stop])
+    }
+
+    @Test func captureWaitsForARegularKeyOrForTheFirstModifierRelease() throws {
+        let control = try keyEvent(.flagsChanged, key: kVK_Control, flags: .control)
+        let option = try keyEvent(.flagsChanged, key: kVK_Option, flags: [.control, .option])
+        let space = try keyEvent(.keyDown, key: kVK_Space, flags: [.control, .option])
+        let releaseControl = try keyEvent(.flagsChanged, key: kVK_Control, flags: .option)
+        let pressFn = try keyEvent(.flagsChanged, key: kVK_Function, flags: .function)
+        let releaseFn = try keyEvent(.flagsChanged, key: kVK_Function)
+
+        var withKey = DictationTrigger.Capture()
+        #expect(withKey.receive(control) == nil)
+        #expect(withKey.receive(option) == nil)
+        #expect(withKey.receive(space)?.name == "⌃⌥空格")
+
+        var modifierOnly = DictationTrigger.Capture()
+        #expect(modifierOnly.receive(releaseControl) == nil)
+        #expect(modifierOnly.receive(control) == nil)
+        #expect(modifierOnly.receive(option) == nil)
+        #expect(modifierOnly.receive(releaseControl)?.name == "⌃⌥")
+
+        var single = DictationTrigger.Capture()
+        #expect(single.receive(pressFn) == nil)
+        #expect(single.receive(releaseFn) == .fn)
+    }
+
+    @Test func aKeyCombinationStopsWhenEitherItsKeyOrAModifierIsReleased() throws {
+        _ = NSApplication.shared
+        let origin = Date(timeIntervalSince1970: 0)
+        let clock = HistoricalScheduler(initialClock: origin)
+        var actions: [FunctionKeyGesture.Action] = []
+        var shortcuts: [DictationKeyInput.RecordingShortcut] = []
+        let input = DictationKeyInput(scheduler: clock, canConfirm: { false }, recordingShortcut: {
+            shortcuts.append($0)
+            return true
+        }, action: { actions.append($0) })
+        var filter: ((NSEvent) -> Bool)?
+        let monitor = DictationKeyMonitor(input: input, isTrusted: { true }, filterGlobal: { handler, _ in
+            filter = handler
+            return { filter = nil }
+        })
+        let modifiers: NSEvent.ModifierFlags = [.control, .option, .command, .shift]
+        let press = try keyEvent(.keyDown, key: kVK_F6, flags: modifiers)
+        let releaseKey = try keyEvent(.keyUp, key: kVK_F6, flags: modifiers)
+        let releaseControl = try keyEvent(.flagsChanged, key: kVK_Control, flags: [.option, .command, .shift])
+        monitor.setTrigger(try #require(DictationTrigger(capturing: press)))
+        monitor.start()
+        defer { monitor.stop() }
+        let deliver = try #require(filter)
+
+        #expect(!deliver(try keyEvent(.keyDown, key: kVK_F6, flags: [.control, .option, .shift])))
+        clock.advanceTo(origin.addingTimeInterval(0.2))
+        #expect(actions.isEmpty)
+        #expect(deliver(press))
+        clock.advanceTo(origin.addingTimeInterval(0.4))
+        #expect(actions == [.start])
+        #expect(deliver(try keyEvent(.keyDown, key: kVK_ANSI_E, flags: modifiers)))
+        #expect(shortcuts == [.edit])
+        #expect(!deliver(releaseControl))
+        #expect(actions == [.start, .stop])
+        #expect(deliver(releaseKey))
+        #expect(actions == [.start, .stop])
+
+        #expect(deliver(press))
+        clock.advanceTo(origin.addingTimeInterval(0.6))
+        #expect(deliver(releaseKey))
+        #expect(!deliver(releaseControl))
+        #expect(actions == [.start, .stop, .start, .stop])
+    }
+
+    @Test func aModifierOnlyCombinationCanStartInEitherOrderAndStopsOnFirstRelease() throws {
+        _ = NSApplication.shared
+        let origin = Date(timeIntervalSince1970: 0)
+        let clock = HistoricalScheduler(initialClock: origin)
+        var actions: [FunctionKeyGesture.Action] = []
+        let input = DictationKeyInput(scheduler: clock, canConfirm: { false }, action: { actions.append($0) })
+        var observer: ((NSEvent) -> Void)?
+        let monitor = DictationKeyMonitor(input: input, isTrusted: { true }, observeGlobal: { handler in
+            observer = handler
+            return { observer = nil }
+        })
+        let controlFirst = try keyEvent(.flagsChanged, key: kVK_Control, flags: .control)
+        let optionFirst = try keyEvent(.flagsChanged, key: kVK_Option, flags: .option)
+        let optionSecond = try keyEvent(.flagsChanged, key: kVK_Option, flags: [.control, .option])
+        let controlSecond = try keyEvent(.flagsChanged, key: kVK_Control, flags: [.control, .option])
+        monitor.setTrigger(try #require(DictationTrigger(capturing: optionSecond)))
+        monitor.start()
+        defer { monitor.stop() }
+        let deliver = try #require(observer)
+
+        deliver(optionFirst)
+        clock.advanceTo(origin.addingTimeInterval(0.2))
+        #expect(actions.isEmpty)
+        deliver(try keyEvent(.flagsChanged, key: kVK_Control, flags: [.control, .option, .shift]))
+        deliver(try keyEvent(.flagsChanged, key: kVK_Shift, flags: [.control, .option]))
+        clock.advanceTo(origin.addingTimeInterval(0.4))
+        #expect(actions.isEmpty)
+        deliver(try keyEvent(.flagsChanged, key: kVK_Control, flags: .option))
+        deliver(controlSecond)
+        clock.advanceTo(origin.addingTimeInterval(0.6))
+        #expect(actions == [.start])
+        deliver(try keyEvent(.flagsChanged, key: kVK_Option, flags: .control))
+        deliver(try keyEvent(.flagsChanged, key: kVK_Control))
+        #expect(actions == [.start, .stop])
+
+        deliver(controlFirst)
+        deliver(optionSecond)
+        clock.advanceTo(origin.addingTimeInterval(0.8))
+        #expect(actions == [.start, .stop, .start])
+        deliver(try keyEvent(.flagsChanged, key: kVK_Control, flags: .option))
+        #expect(actions == [.start, .stop, .start, .stop])
     }
 
     @Test func selectedRightOptionStartsAndStopsDictationWithoutUsingFnOrLeftOption() throws {

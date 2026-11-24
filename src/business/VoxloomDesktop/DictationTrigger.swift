@@ -3,6 +3,28 @@ import Carbon
 import IOKit.hidsystem
 
 struct DictationTrigger: Equatable {
+    struct Capture {
+        private var pendingModifiers: DictationTrigger?
+
+        mutating func receive(_ event: NSEvent) -> DictationTrigger? {
+            if event.type == .keyDown {
+                guard !event.isARepeat else { return nil }
+                pendingModifiers = nil
+                return DictationTrigger(capturing: event)
+            }
+            guard event.type == .flagsChanged, let modifier = DictationTrigger.modifiers[Int(event.keyCode)] else {
+                return nil
+            }
+            if modifier.isPressed(event.modifierFlags) {
+                pendingModifiers = DictationTrigger(capturing: event)
+            } else if let pendingModifiers, !pendingModifiers.hasRequiredModifiers(event.modifierFlags) {
+                self.pendingModifiers = nil
+                return pendingModifiers
+            }
+            return nil
+        }
+    }
+
     struct Modifier {
         let name: String
         let flag: NSEvent.ModifierFlags
@@ -20,41 +42,102 @@ struct DictationTrigger: Equatable {
 
     static let fn = Self(keyCode: UInt16(kVK_Function), name: "Fn")
     private static let chordModifiers: NSEvent.ModifierFlags = [.shift, .control, .command, .option]
-    let keyCode: UInt16
-    let name: String
+    private static let modifierSymbols: [(NSEvent.ModifierFlags, String)] = [
+        (.control, "⌃"), (.option, "⌥"), (.shift, "⇧"), (.command, "⌘"),
+    ]
+    let keyCode: UInt16?
+    private let baseName: String
+    let requiredModifiers: NSEvent.ModifierFlags
 
-    var modifier: Modifier? { Self.modifiers[Int(keyCode)] }
+    var name: String {
+        Self.modifierSymbols.compactMap { requiredModifiers.contains($0.0) ? $0.1 : nil }.joined() + baseName
+    }
+
+    var modifier: Modifier? { keyCode.flatMap { Self.modifiers[Int($0)] } }
+    var isModifierOnly: Bool { keyCode == nil || modifier != nil }
+
+    func hasRequiredModifiers(_ flags: NSEvent.ModifierFlags) -> Bool {
+        modifier?.isPressed(flags) ?? flags.isSuperset(of: requiredModifiers)
+    }
+
+    func isModifierCombinationPress(_ event: NSEvent) -> Bool {
+        guard keyCode == nil, let modifier = Self.modifiers[Int(event.keyCode)] else { return false }
+        return requiredModifiers.contains(modifier.flag) && modifier.isPressed(event.modifierFlags)
+    }
 
     func permits(_ flags: NSEvent.ModifierFlags) -> Bool {
-        guard let modifier else { return flags.isDisjoint(with: Self.chordModifiers) }
-        let other = Self.chordModifiers.union(.function).subtracting(modifier.flag)
-        return flags.isDisjoint(with: other) && flags.rawValue & UInt(modifier.oppositeMask) == 0
+        if let modifier {
+            let other = Self.chordModifiers.union(.function).subtracting(modifier.flag)
+            return flags.isDisjoint(with: other) && flags.rawValue & UInt(modifier.oppositeMask) == 0
+        }
+        let relevantFlags = keyCode == nil ? Self.chordModifiers.union(.function) : Self.chordModifiers
+        return flags.intersection(relevantFlags) == requiredModifiers
     }
 
     init?(capturing event: NSEvent) {
         let key = Int(event.keyCode)
+        let heldModifiers = event.modifierFlags.intersection(Self.chordModifiers)
         if event.type == .flagsChanged, let modifier = Self.modifiers[key] {
-            self.init(keyCode: event.keyCode, name: modifier.name)
-            guard modifier.isPressed(event.modifierFlags), permits(event.modifierFlags) else { return nil }
+            guard modifier.isPressed(event.modifierFlags) else { return nil }
+            if heldModifiers.rawValue.nonzeroBitCount > 1 {
+                guard !event.modifierFlags.contains(.function) else { return nil }
+                self.init(keyCode: nil, name: "", requiredModifiers: heldModifiers)
+            } else {
+                self.init(keyCode: event.keyCode, name: modifier.name)
+                guard permits(event.modifierFlags) else { return nil }
+            }
         } else {
-            guard event.type == .keyDown, !event.isARepeat, key != kVK_Escape, key != kVK_ANSI_E,
-                  Self.modifiers[key] == nil, event.modifierFlags.isDisjoint(with: Self.chordModifiers) else { return nil }
-            self.init(keyCode: event.keyCode, name: Self.keyName(event))
+            guard event.type == .keyDown, !event.isARepeat, Self.isAllowedKey(key),
+                  Self.modifiers[key] == nil else { return nil }
+            self.init(keyCode: event.keyCode, name: Self.keyName(event), requiredModifiers: heldModifiers)
         }
     }
 
     init?(stored: [String: Any]?) {
-        guard let code = stored?["keyCode"] as? Int, let keyCode = UInt16(exactly: code),
-              let name = stored?["name"] as? String, !name.isEmpty, name.count <= 32,
-              code != kVK_Escape, code != kVK_ANSI_E, code != kVK_CapsLock else { return nil }
-        self.init(keyCode: keyCode, name: Self.modifiers[code]?.name ?? name)
+        guard let stored else { return nil }
+        let keyFields: [String: Any]
+        let requiredModifiers: NSEvent.ModifierFlags
+        if let encoded = stored["combination"] {
+            guard let combination = encoded as? [String: Any],
+                  let value = combination["modifiers"] as? Int, value > 0,
+                  let raw = UInt(exactly: value) else { return nil }
+            requiredModifiers = NSEvent.ModifierFlags(rawValue: raw)
+            guard Self.chordModifiers.isSuperset(of: requiredModifiers) else { return nil }
+            keyFields = combination
+        } else {
+            requiredModifiers = []
+            keyFields = stored
+        }
+        if keyFields["keyCode"] == nil {
+            guard requiredModifiers.rawValue.nonzeroBitCount > 1 else { return nil }
+            self.init(keyCode: nil, name: "", requiredModifiers: requiredModifiers)
+            return
+        }
+        guard let code = keyFields["keyCode"] as? Int, let keyCode = UInt16(exactly: code),
+              let name = keyFields["name"] as? String, !name.isEmpty, name.count <= 32,
+              Self.isAllowedKey(code), requiredModifiers.isEmpty || Self.modifiers[code] == nil else { return nil }
+        self.init(keyCode: keyCode, name: Self.modifiers[code]?.name ?? name, requiredModifiers: requiredModifiers)
     }
 
-    var stored: [String: Any] { ["keyCode": Int(keyCode), "name": name] }
+    var stored: [String: Any] {
+        var value: [String: Any] = [:]
+        if let keyCode {
+            value["keyCode"] = Int(keyCode)
+            value["name"] = baseName
+        }
+        guard !requiredModifiers.isEmpty else { return value }
+        value["modifiers"] = Int(requiredModifiers.rawValue)
+        return ["combination": value]
+    }
 
-    private init(keyCode: UInt16, name: String) {
+    private init(keyCode: UInt16?, name: String, requiredModifiers: NSEvent.ModifierFlags = []) {
         self.keyCode = keyCode
-        self.name = name
+        baseName = name
+        self.requiredModifiers = requiredModifiers
+    }
+
+    private static func isAllowedKey(_ key: Int) -> Bool {
+        key != kVK_Escape && key != kVK_ANSI_E && key != kVK_CapsLock
     }
 
     private static func keyName(_ event: NSEvent) -> String {

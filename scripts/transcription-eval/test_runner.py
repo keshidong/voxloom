@@ -24,7 +24,7 @@ class EvaluationRunnerTests(unittest.TestCase):
         audio = self.directory / "test.wav"
         with wave.open(str(audio), "wb") as wav:
             wav.setparams((1, 2, 16000, 0, "NONE", "not compressed"))
-            wav.writeframes(b"\x01\x01" * 160)
+            wav.writeframes(b"\x01\x01\xff\xfe" * 800)
         self.manifest.write_text(json.dumps({"clips": [
             {"id": "one", "audio": str(audio), "reference": "hello world", "language": "en", "group": "en"},
         ]}), encoding="utf-8")

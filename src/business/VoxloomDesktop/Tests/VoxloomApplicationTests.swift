@@ -7,6 +7,41 @@ import Testing
 @testable import VoxloomDesktop
 
 @MainActor @Suite(.serialized) struct VoxloomApplicationTests {
+    @Test func settingsRecordsTheCompleteShortcutAndCanRestoreFn() throws {
+        let app = NSApplication.shared
+        let settings = SettingsWindow(settings: .init())
+        let original = try #require(settings.window)
+        let content = try #require(original.contentView)
+        let window = ShortcutCaptureTestWindow(contentRect: original.frame, styleMask: .titled,
+                                               backing: .buffered, defer: false)
+        // Drive the local event monitor without activating the test host.
+        original.contentView = nil
+        window.contentView = content
+        settings.window = window
+        defer {
+            settings.stopTriggerCapture()
+            window.orderOut(nil)
+        }
+        var selected: [DictationTrigger] = []
+        settings.onChange = { selected.append($0.trigger) }
+        try #require(findButton(labeled: "更改按住说话键", in: content)).performClick(nil)
+
+        func send(_ type: NSEvent.EventType, key: Int, modifiers: NSEvent.ModifierFlags) throws {
+            let event = try #require(NSEvent.keyEvent(with: type, location: .zero, modifierFlags: modifiers,
+                timestamp: 0, windowNumber: window.windowNumber, context: nil, characters: "", charactersIgnoringModifiers: "",
+                isARepeat: false, keyCode: UInt16(key)))
+            app.sendEvent(event)
+        }
+
+        try send(.flagsChanged, key: kVK_Command, modifiers: .command)
+        try send(.flagsChanged, key: kVK_Shift, modifiers: [.command, .shift])
+        #expect(selected.isEmpty)
+        try send(.keyDown, key: kVK_Space, modifiers: [.command, .shift])
+        #expect(selected.map(\.name) == ["⇧⌘空格"])
+        try #require(findButton(labeled: "恢复 Fn", in: content)).performClick(nil)
+        #expect(selected.last == .fn)
+    }
+
     @Test func showingTheVoiceBarRestoresItAboveTheDock() throws {
         _ = NSApplication.shared
         let screen = try #require(NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? NSScreen.main)
@@ -171,8 +206,7 @@ import Testing
         let deadline = ContinuousClock.now.advanced(by: .seconds(3))
         while await engine.prepares == 0 && ContinuousClock.now < deadline { await Task.yield() }
         #expect(await engine.prepares == 1)
-        while await optionalStart.asrReady == nil && ContinuousClock.now < deadline { await Task.yield() }
-        #expect(await optionalStart.asrReady == true)
+        #expect(await optionalStart.asrReady == nil)
         #expect(app.overlay.downloadProgress.isHiddenOrHasHiddenAncestor)
         app.flow.handle(.start)
         while capture.receive == nil && ContinuousClock.now < deadline { await Task.yield() }
@@ -184,12 +218,8 @@ import Testing
         while !app.flow.canStart && ContinuousClock.now < deadline { await Task.yield() }
         #expect(app.flow.state?.text == "第一段")
         #expect(!app.flow.settings.correctsText)
-        #expect(!app.flow.settings.usesConversationContext)
         #expect(!downloads.isInstalled("correction"))
-        optionalGate.continuation.finish()
-        let optionalDeadline = ContinuousClock.now.advanced(by: .seconds(3))
-        while !downloads.isInstalled("correction") && ContinuousClock.now < optionalDeadline { await Task.yield() }
-        #expect(downloads.isInstalled("correction"))
+        #expect(await optionalStart.asrReady == nil)
         await app.stop()
     }
 
@@ -498,7 +528,7 @@ import Testing
         await app.stop()
     }
 
-    @Test func contextDownloadsAutomaticallyAfterASRAndShowsProgressWhileListening() async throws {
+    @Test func correctionModelDownloadsOnlyWhenCorrectionIsEnabled() async throws {
         _ = NSApplication.shared
         let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
@@ -545,11 +575,24 @@ import Testing
             app.overlay.panel.orderOut(nil)
         }
         let content = try #require(app.settingsWindow.window?.contentView)
+        #expect(!containsLabel("Qwen3-4B Instruct 等待下载", in: content))
         let startupDeadline = ContinuousClock.now.advanced(by: .seconds(2))
         while await !transfer.requiredStarted && ContinuousClock.now < startupDeadline { await Task.yield() }
         try #require(await transfer.requiredStarted)
         #expect(await transfer.asrReady == nil)
         requiredGate.continuation.finish()
+
+        let readyDeadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while await recognizer.prepares == 0 && ContinuousClock.now < readyDeadline { await Task.yield() }
+        try #require(await recognizer.prepares > 0)
+        #expect(await transfer.asrReady == nil)
+        #expect(!containsLabel("Qwen3-4B Instruct 下载中，请稍候", in: content))
+        #expect(!containsLabel("Qwen3-4B Instruct 下载中 50%", in: content))
+
+        let correction = app.settingsWindow.correction
+        correction.selectItem(at: 0)
+        let correctionAction = try #require(correction.action)
+        correction.sendAction(correctionAction, to: correction.target)
 
         let optionalDeadline = ContinuousClock.now.advanced(by: .seconds(2))
         while !containsLabel("Qwen3-4B Instruct 下载中 50%", in: content) && ContinuousClock.now < optionalDeadline {
@@ -569,19 +612,12 @@ import Testing
         #expect(app.flow.state?.text == "第一段")
         #expect(!downloads.isInstalled("correction"))
 
-        let popup = try #require(findButton(labeled: "ASR 上下文提取", in: content) as? NSPopUpButton)
-        #expect(!popup.isEnabled)
-        app.settingsWindow.conversationContext.performClick(nil)
-        #expect(popup.isEnabled)
-        #expect(!downloads.isInstalled("correction"))
-
         optionalGate.continuation.finish()
         let deadline = ContinuousClock.now.advanced(by: .seconds(2))
         while !containsLabel("Qwen3-4B Instruct 已就绪", in: content) && ContinuousClock.now < deadline { await Task.yield() }
 
         let saved = DictationSettings(defaults: defaults)
-        #expect(saved.summarizesConversation)
-        #expect(!saved.correctsText)
+        #expect(saved.correctsText)
         #expect(downloads.isInstalled("correction"))
         #expect(containsLabel("Qwen3-4B Instruct 已就绪", in: content))
         await app.stop()
@@ -627,19 +663,6 @@ import Testing
         app.settingsWindow.vocabulary.stringValue = "Voxloom"
         app.settingsWindow.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification))
         #expect(DictationSettings(defaults: defaults).vocabulary == "Voxloom")
-        #expect(app.settingsWindow.inputContext.state == .on)
-        app.settingsWindow.inputContext.performClick(nil)
-        #expect(!DictationSettings(defaults: defaults).usesInputContext)
-        #expect(app.settingsWindow.conversationContext.state == .off)
-        app.settingsWindow.conversationContext.performClick(nil)
-        #expect(DictationSettings(defaults: defaults).usesConversationContext)
-        #expect(!DictationSettings(defaults: defaults).usesInputContext)
-        #if DEBUG
-        app.showContextLog()
-        let logWindow = try #require(NSApp.windows.first { $0.title == "ASR 上下文日志" })
-        #expect(logWindow.isVisible)
-        logWindow.orderOut(nil)
-        #endif
         let settingsAction = try #require(findButton(labeled: "启用辅助功能", in: settingsContent))
         settingsAction.performClick(nil)
         #expect(accessibilityRequests == 2)
@@ -747,6 +770,10 @@ import Testing
         app.overlay.panel.orderOut(nil)
     }
 
+}
+
+@MainActor private final class ShortcutCaptureTestWindow: NSWindow {
+    override var isKeyWindow: Bool { true }
 }
 
 @MainActor private func findButton(labeled label: String, in view: NSView) -> NSButton? {

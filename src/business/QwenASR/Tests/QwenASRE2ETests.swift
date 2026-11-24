@@ -14,17 +14,36 @@ private let englishAudio = bundleResources?.appendingPathComponent("english.wav"
 private let corpusPath = ProcessInfo.processInfo.environment["VOXLOOM_CORRECTION_CORPUS"]
 
 @Suite(.serialized) struct QwenASRE2ETests {
+    @Test(.enabled(if: FileManager.default.isExecutableFile(atPath: asrExecutable.path)
+                      && FileManager.default.fileExists(atPath: asrModel.appendingPathComponent("model.safetensors").path)))
+    func keywordContextKeepsTheTranscriptGroundedAndSilenceEmpty() async throws {
+        let recognizer = QwenASRRecognizer(configuration: .init(executable: asrExecutable, model: asrModel))
+        let hints = RecognitionOptions(language: .chinese, context: "交易 停滞")
+        let noHints = RecognitionOptions(language: .chinese)
+        do {
+            let audio = try WAVCodec.decode(Data(contentsOf: chineseAudio))
+            let baseline = try await recognizer.transcribe(audio, options: noHints)
+            let contextual = try await recognizer.transcribe(audio, options: hints)
+            #expect(baseline.text.contains("交易几乎停滞"))
+            #expect(contextual.text.contains("交易几乎停滞"))
+            let quiet = try AudioClip(samples: Array(repeating: 0, count: AudioClip.sampleRate))
+            let silence = try await recognizer.transcribe(quiet, options: hints)
+            #expect(silence.text.isEmpty)
+            await recognizer.shutdown()
+        } catch { await recognizer.shutdown(); throw error }
+    }
+
     @Test(.enabled(if: FileManager.default.fileExists(atPath: asrModel.appendingPathComponent("model.safetensors").path)),
           arguments: [false, true])
-    func residentASRAndLLMProduceSeparateTextsInTheRealOfflinePipeline(withInputContext: Bool) async throws {
+    func residentASRAndLLMProduceSeparateTextsInTheRealOfflinePipeline(withManualHints: Bool) async throws {
         let asr: any SpeechRecognizer = QwenASRRecognizer(configuration: .init(
             executable: asrExecutable, model: asrModel))
         let corrector: any TextCorrecting = QwenTextCorrector(configuration: .init(
             executable: llmExecutable, model: llmModel))
         do {
             let audio = try WAVCodec.decode(Data(contentsOf: chineseAudio))
-            let hints = withInputContext ? "市场 交易" : ""
-            let reference = withInputContext ? "此前讨论过市场交易情况。档案编号 ZEN-731。" : ""
+            let hints = withManualHints ? "市场 交易" : ""
+            let reference = withManualHints ? "此前讨论过市场交易情况。档案编号 ZEN-731。" : ""
             let original = try await asr.transcribe(audio, options: .init(language: .chinese, context: hints))
             let candidate = try await corrector.correct(.init(text: original.text, surroundingText: reference))
             #expect(original.text.contains("交易"))
@@ -42,6 +61,9 @@ private let corpusPath = ProcessInfo.processInfo.environment["VOXLOOM_CORRECTION
             let chinese = try WAVCodec.decode(Data(contentsOf: chineseAudio))
             let result = try await recognizer.transcribe(chinese, options: .init(language: .chinese, context: "交易 停滞"))
             #expect(result.text.contains("甚至出现交易几乎停滞的情况"))
+            let quietChinese = try AudioClip(samples: chinese.samples.map { $0 / 8 })
+            let quietResult = try await recognizer.transcribe(quietChinese, options: .init(language: .chinese))
+            #expect(quietResult.text.contains("交易几乎停滞"))
             let english = try WAVCodec.decode(Data(contentsOf: englishAudio))
             let en = try await recognizer.transcribe(english, options: .init(language: .english))
             #expect(en.text.lowercased().contains("ask not what your country can do for you"))

@@ -43,11 +43,6 @@ struct LocalModels {
             useGPU: settings.usesGPU, mode: .interactive))
     }
 
-    func contextSummarizer(for settings: DictationSettings) -> (any RecognitionContextSummarizing)? {
-        guard settings.summarizesConversation, downloads?.isInstalled("correction") ?? true else { return nil }
-        return QwenContextSummarizer(executable: file("llama-completion"), model: qwenTextWeights, useGPU: settings.usesGPU)
-    }
-
     func voiceIsolator() -> VoiceIsolator? {
         let executable = file("voice-isolation-runtime/voice-isolation")
         guard FileManager.default.isExecutableFile(atPath: executable.path) else { return nil }

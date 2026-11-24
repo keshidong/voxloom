@@ -10,19 +10,6 @@ private let engine = bundleResources?.appendingPathComponent("llama-completion")
 
 @Suite(.serialized) struct QwenE2ETests {
     @Test(.enabled(if: FileManager.default.isExecutableFile(atPath: engine.path) && FileManager.default.fileExists(atPath: model.path)),
-          arguments: [false, true])
-    func localContextModelExtractsTwoOriginalMessagesFromNearbyUI(includesTerminalActivity: Bool) async throws {
-        let summarizer = QwenContextSummarizer(executable: engine, model: model, useGPU: false)
-        let previous = "我刚在 Voxloom 里试了  MLX Audio。"
-        let latest = "明天对照跑 Qwen3-ASR。\n先用同一批录音。"
-        let surrounding = includesTerminalActivity ? "Opened https://example.com/status" : "发送消息"
-        let result = try await summarizer.summarize(.nearbyText(["聊天详情", "昨天先看模型下载。", "10:32", previous,
-                                                               "10:33", latest, surrounding]))
-        #expect(result.originalMessages == [previous, latest])
-        #expect(!result.summary.isEmpty)
-    }
-
-    @Test(.enabled(if: FileManager.default.isExecutableFile(atPath: engine.path) && FileManager.default.fileExists(atPath: model.path)),
           arguments: [
               CorrectionRequest(text: "哦哦，寄去南桥，南桥，好像还得等三天。", vocabulary: "北桥"),
               CorrectionRequest(text: "先确认 cache 里存了两份，两份，然后把第二份给……", vocabulary: "Cash Flow")

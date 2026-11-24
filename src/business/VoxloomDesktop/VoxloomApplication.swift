@@ -49,10 +49,6 @@ import SpeechFoundation
     private var activationObservation: (any NSObjectProtocol)?
     private var menuItem: NSStatusItem?
     private var voicePreparation: Task<Void, Never>?
-    #if DEBUG
-    private let debugContextLog = DebugContextLog()
-    private lazy var debugContextWindow = DebugContextLogWindow(log: debugContextLog)
-    #endif
 
     init(root: URL, defaults: UserDefaults = .standard, pasteboard: NSPasteboard = .general,
          recognizer: ((DictationSettings) -> any SpeechRecognizer)? = nil,
@@ -91,13 +87,6 @@ import SpeechFoundation
             recognizer: recognizer ?? models.recognizer, corrector: models.corrector,
             insertion: insertion ?? CaretInsertion(foregroundTarget: SystemPaste.foregroundTarget,
                 canPost: { permissions.canInsert }, paste: systemPaste.paste, captureFocus: SystemTextInput.captureFocus),
-            readContext: { settings in
-                guard permissions.isTrusted() else { return nil }
-                return SystemTextInput.contextReader(includeDraft: settings.usesInputContext,
-                                                     includeConversation: settings.usesConversationContext,
-                                                     usesConversationModel: settings.summarizesConversation)
-            },
-            contextSummarizer: models.contextSummarizer,
             prepareVoiceIsolation: {
                 guard let voiceIsolator else { throw VoiceIsolationSetupError.unavailable }
                 guard models.downloads?.isInstalled("voiceIsolation") != false else {
@@ -113,9 +102,6 @@ import SpeechFoundation
             recognitionAvailable: { models.canRecognize($0.model) })
         settingsWindow = SettingsWindow(settings: selected, hasModelDownloads: modelPreparation != nil)
         super.init()
-        #if DEBUG
-        flow.debugContextLog = debugContextLog
-        #endif
     }
 
     private static var applicationSupport: URL {
@@ -194,9 +180,6 @@ import SpeechFoundation
         await flow.shutdown()
         await voiceIsolator?.shutdown()
         await voicePreparation?.value
-        #if DEBUG
-        debugContextLog.clear()
-        #endif
     }
 
     private func wireControls() {
@@ -226,6 +209,7 @@ import SpeechFoundation
             if previous.trigger != value.trigger { monitor?.setTrigger(value.trigger) }
             flow.apply(value)
             if previous.model != value.model { modelPreparation?.cancel(previous.model.rawValue) }
+            if previous.correctsText && !value.correctsText { modelPreparation?.cancel("correction") }
             if !value.usesVoiceIsolation { modelPreparation?.cancel("voiceIsolation") }
             prepareSelectedModels()
             if value.usesVoiceIsolation && !previous.usesVoiceIsolation { prepareVoiceIsolationIfEnabled() }
@@ -234,7 +218,7 @@ import SpeechFoundation
         }
         settingsWindow.onTriggerCapture = { [weak self] capturing in self?.monitor?.setSelectingTrigger(capturing) }
         settingsWindow.onRetryModel = { [weak self] model in
-            if model == "correction" { self?.prepareContextModelDownload(retry: true) }
+            if model == "correction" { self?.prepareCorrectionModelDownload(retry: true) }
             else { self?.modelPreparation?.prepare(model, retry: true) }
         }
         modelPreparation?.onChange = { [weak self] model in self?.modelDownloadChanged(model) }
@@ -262,13 +246,15 @@ import SpeechFoundation
         guard let modelPreparation else { return }
         let settings = flow.settings
         modelPreparation.prepare(settings.model.rawValue)
-        prepareContextModelDownload()
+        prepareCorrectionModelDownload()
         if settings.usesVoiceIsolation, voiceIsolator != nil { modelPreparation.prepare("voiceIsolation") }
         settingsWindow.updateModelDownloads(modelPreparation, settings: settings)
     }
 
-    private func prepareContextModelDownload(retry: Bool = false) {
-        guard let modelPreparation, modelPreparation.status(for: flow.settings.model.rawValue) == .ready else { return }
+    private func prepareCorrectionModelDownload(retry: Bool = false) {
+        let settings = flow.settings
+        guard settings.correctsText, let modelPreparation,
+              modelPreparation.status(for: settings.model.rawValue) == .ready else { return }
         modelPreparation.prepare("correction", retry: retry)
     }
 
@@ -283,9 +269,8 @@ import SpeechFoundation
         if model == settings.model.rawValue {
             flow.showNotice("转写模型已就绪")
             flow.prepareForFirstRecording()
-            prepareContextModelDownload()
+            prepareCorrectionModelDownload()
         }
-        if model == "correction" { flow.contextModelDidBecomeAvailable() }
         if model == "voiceIsolation" { prepareVoiceIsolationIfEnabled() }
     }
 
@@ -313,11 +298,6 @@ import SpeechFoundation
             let entry = menu.addItem(withTitle: title, action: action, keyEquivalent: key)
             entry.target = self
         }
-        #if DEBUG
-        let context = NSMenuItem(title: "ASR 上下文日志…", action: #selector(showContextLog), keyEquivalent: "")
-        context.target = self
-        menu.insertItem(context, at: 2)
-        #endif
         item.menu = menu
         menuItem = item
     }
@@ -372,14 +352,6 @@ import SpeechFoundation
         settingsWindow.window?.makeKeyAndOrderFront(nil)
         activate()
     }
-
-    #if DEBUG
-    @objc func showContextLog() {
-        debugContextWindow.showWindow(nil)
-        debugContextWindow.window?.makeKeyAndOrderFront(nil)
-        activate()
-    }
-    #endif
 
     @objc private func insertDraft() { receive(.confirm) }
     @objc private func clearDraft() { flow.clearOrCancel() }
