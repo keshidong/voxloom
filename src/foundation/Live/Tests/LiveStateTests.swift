@@ -2,6 +2,41 @@ import Testing
 import SpeechFoundation
 
 struct LiveStateTests {
+    @Test(arguments: [true, false])
+    func filteredPreviewDoesNotReplaceFullFinalRecognition(previewCompletesBeforeRelease: Bool) {
+        let audio = Array(repeating: Int16(1000), count: AudioClip.sampleRate)
+        var state = LiveState()
+        func send(_ event: LiveEvent) -> LiveTransition {
+            let next = LiveReducer.reduce(state, event, requiresFinalRecognition: true)
+            state = next.state
+            return next
+        }
+        _ = send(.start)
+        _ = send(.ready(1))
+        #expect(send(.audio(1, audio)).effects == [.recognize(1, audio)])
+        let preview = LiveEvent.result(1, audio.count, "预览")
+        if previewCompletesBeforeRelease { _ = send(preview) }
+        let release = send(.stop)
+        let finalEffects = previewCompletesBeforeRelease ? release.effects : send(preview).effects
+        #expect(finalEffects.contains(.recognize(1, audio)))
+        #expect(state.phase == .finishing)
+        #expect(send(.result(1, audio.count, "定稿")).effects.isEmpty)
+        #expect(state.phase == .idle)
+        #expect(state.text == "定稿")
+    }
+
+    @Test func finalOnlyRecognitionQueuesTheRecordingOnceOnRelease() {
+        let started = LiveReducer.reduce(LiveState(), .start, recognizesWhileRecording: false).state
+        let recording = LiveReducer.reduce(started, .ready(started.session), recognizesWhileRecording: false).state
+        let audio = Array(repeating: Int16(1000), count: AudioClip.sampleRate)
+        let held = LiveReducer.reduce(recording, .audio(started.session, audio), recognizesWhileRecording: false)
+        #expect(held.effects.isEmpty)
+        #expect(LiveReducer.reduce(held.state, .pulse, recognizesWhileRecording: false).effects.isEmpty)
+        let released = LiveReducer.reduce(held.state, .stop, recognizesWhileRecording: false)
+        let queuedExactlyOnce = released.effects == [.stopCapture, .recognize(started.session, audio)]
+        #expect(queuedExactlyOnce)
+    }
+
     @Test func releaseDuringAuthorizationStopsAndIgnoresLatePermission() {
         let awaiting = LiveReducer.reduce(LiveState(), .start).state
         let released = LiveReducer.reduce(awaiting, .stop)

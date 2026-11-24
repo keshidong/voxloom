@@ -6,7 +6,8 @@ import SpeechFoundation
 @MainActor public enum VoxloomApplication {
     public static func run() {
         let app = NSApplication.shared
-        let coordinator = VoxloomCoordinator(root: Bundle.main.resourceURL ?? Bundle.main.bundleURL)
+        let coordinator = VoxloomCoordinator(root: Bundle.main.resourceURL ?? Bundle.main.bundleURL,
+            downloadDirectory: VoxloomCoordinator.modelDirectory)
         app.setActivationPolicy(.accessory)
         app.delegate = coordinator
         app.run()
@@ -20,6 +21,9 @@ import SpeechFoundation
     let flow: VoxloomFlow
     private let defaults: UserDefaults
     private let models: LocalModels
+    private let modelPreparation: ModelPreparation?
+    private let enrollment: VoiceEnrollment
+    private let voiceIsolator: VoiceIsolator?
     private let pasteboard: NSPasteboard
     private let systemPaste: SystemPaste
     private let activate: () -> Void
@@ -40,6 +44,7 @@ import SpeechFoundation
     private var availability = DictationAvailability()
     private var activationObservation: (any NSObjectProtocol)?
     private var menuItem: NSStatusItem?
+    private var voicePreparation: Task<Void, Never>?
     #if DEBUG
     private let debugContextLog = DebugContextLog()
     private lazy var debugContextWindow = DebugContextLogWindow(log: debugContextLog)
@@ -51,6 +56,10 @@ import SpeechFoundation
          insertion: CaretInsertion? = nil,
          activate: @escaping () -> Void = { NSApp.activate() },
          permissions: DictationPermissions = .init(),
+         downloadDirectory: URL? = nil,
+         downloadModel: @escaping ModelDownloads.Download = ModelDownloads.fetch,
+         voiceSampleDirectory: URL? = nil,
+         voiceSamplePlayer: any VoiceSamplePlaying = VoiceSamplePlayback(),
          keyScheduler: any SchedulerType = MainScheduler.instance,
          makeMonitor: ((DictationKeyInput) -> DictationKeyMonitor)? = nil,
          replyToQuit: @escaping (Bool) -> Void = { NSApp.reply(toApplicationShouldTerminate: $0) }) {
@@ -63,8 +72,14 @@ import SpeechFoundation
                                                                  filterGlobal: DictationEventTap.install) }
         self.replyToQuit = replyToQuit
         let selected = DictationSettings(defaults: defaults)
-        let models = LocalModels(root: root)
+        let models = LocalModels(root: root, downloadDirectory: downloadDirectory)
         self.models = models
+        modelPreparation = models.downloads.map { ModelPreparation(downloads: $0, download: downloadModel) }
+        let directory = voiceSampleDirectory ?? Self.voiceSampleDirectory
+        let store = VoiceSampleStore(directory: directory)
+        enrollment = VoiceEnrollment(store: store, makeCapture: capture, player: voiceSamplePlayer)
+        let voiceIsolator = models.voiceIsolator()
+        self.voiceIsolator = voiceIsolator
         let systemPaste = SystemPaste(board: pasteboard)
         self.systemPaste = systemPaste
         flow = VoxloomFlow(settings: selected, capture: capture,
@@ -75,12 +90,40 @@ import SpeechFoundation
                 guard permissions.isTrusted() else { return nil }
                 return SystemTextInput.contextReader(includeDraft: settings.usesInputContext,
                                                      includeConversation: settings.usesConversationContext)
-            })
-        settingsWindow = SettingsWindow(settings: selected)
+            },
+            prepareVoiceIsolation: {
+                guard let voiceIsolator else { throw VoiceIsolationSetupError.unavailable }
+                guard models.downloads?.isInstalled("voiceIsolation") != false else {
+                    throw VoiceIsolationSetupError.unavailable
+                }
+                let references = try VoiceSampleKind.allCases.compactMap { try store.read($0) }
+                guard !references.isEmpty else { throw VoiceIsolationSetupError.missingSamples }
+                let session = UUID()
+                return VoiceIsolationPreparation(
+                    preview: { audio in try await voiceIsolator.preview(audio, references: references, session: session) },
+                    final: { audio in try await voiceIsolator.isolate(audio, references: references) })
+            },
+            recognitionAvailable: { models.canRecognize($0.model) })
+        settingsWindow = SettingsWindow(settings: selected, hasModelDownloads: modelPreparation != nil)
         super.init()
         #if DEBUG
         flow.debugContextLog = debugContextLog
         #endif
+    }
+
+    private static var applicationSupport: URL {
+        let manager = FileManager.default
+        return manager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? manager.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support")
+    }
+
+    fileprivate static var modelDirectory: URL {
+        applicationSupport.appending(path: "dev.voxloom.app/Models", directoryHint: .isDirectory)
+    }
+
+    private static var voiceSampleDirectory: URL {
+        applicationSupport.appendingPathComponent(Bundle.main.bundleIdentifier ?? "dev.voxloom.app")
+            .appendingPathComponent("Voice Samples", isDirectory: true)
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -94,6 +137,10 @@ import SpeechFoundation
             MainActor.assumeIsolated { self?.refreshKeyboardMonitoring() }
         }
         connectViews()
+        if !models.canRecognize(flow.settings.model) { showSettings() }
+        prepareSelectedModels()
+        flow.prepareForFirstRecording()
+        prepareVoiceIsolationIfEnabled()
     }
 
     func connectViews() {
@@ -124,6 +171,8 @@ import SpeechFoundation
     }
 
     func stop() async {
+        enrollment.cancel()
+        voicePreparation?.cancel()
         if let activationObservation { NSWorkspace.shared.notificationCenter.removeObserver(activationObservation) }
         activationObservation = nil
         monitor?.stop()
@@ -131,7 +180,10 @@ import SpeechFoundation
         if let menuItem { NSStatusBar.system.removeStatusItem(menuItem) }
         menuItem = nil
         systemPaste.restoreClipboard()
+        await modelPreparation?.stop()
         await flow.shutdown()
+        await voiceIsolator?.shutdown()
+        await voicePreparation?.value
         #if DEBUG
         debugContextLog.clear()
         #endif
@@ -154,8 +206,65 @@ import SpeechFoundation
         overlay.onEdit = { [weak flow] text, visible, range in flow?.edit(text, basedOn: visible, replacedRange: range) }
         settingsWindow.onChange = { [weak self] value in
             guard let self else { return }
+            let previous = flow.settings
             value.save(to: defaults)
             flow.apply(value)
+            if previous.model != value.model { modelPreparation?.cancel(previous.model.rawValue) }
+            if !value.correctsText { modelPreparation?.cancel("correction") }
+            if !value.usesVoiceIsolation { modelPreparation?.cancel("voiceIsolation") }
+            prepareSelectedModels()
+            if value.usesVoiceIsolation && !previous.usesVoiceIsolation { prepareVoiceIsolationIfEnabled() }
+            refreshVoiceEnrollment()
+        }
+        settingsWindow.onRetryModel = { [weak self] model in self?.modelPreparation?.prepare(model, retry: true) }
+        modelPreparation?.onChange = { [weak self] model in self?.modelDownloadChanged(model) }
+        settingsWindow.onRecordVoice = { [weak self] kind in
+            guard let self else { return }
+            guard flow.canStart else { enrollment.showNotice("请先结束听写，再录语音样本"); return }
+            enrollment.toggle(kind)
+        }
+        settingsWindow.onPlayVoice = { [weak self] kind in
+            guard let self else { return }
+            guard flow.canStart else { enrollment.showNotice("请先结束听写，再试听语音样本"); return }
+            enrollment.togglePlayback(kind)
+        }
+        settingsWindow.onRemoveVoice = { [weak enrollment] kind in enrollment?.remove(kind) }
+        settingsWindow.onClose = { [weak enrollment] in enrollment?.cancel() }
+        enrollment.onChange = { [weak self] in self?.refreshVoiceEnrollment() }
+        refreshVoiceEnrollment()
+    }
+
+    private func refreshVoiceEnrollment() {
+        settingsWindow.updateVoiceEnrollment(enrollment, modelAvailable: voiceIsolator != nil)
+    }
+
+    private func prepareSelectedModels() {
+        guard let modelPreparation else { return }
+        let settings = flow.settings
+        modelPreparation.prepare(settings.model.rawValue)
+        if settings.correctsText { modelPreparation.prepare("correction") }
+        if settings.usesVoiceIsolation, voiceIsolator != nil { modelPreparation.prepare("voiceIsolation") }
+        settingsWindow.updateModelDownloads(modelPreparation, settings: settings)
+    }
+
+    private func modelDownloadChanged(_ model: String) {
+        guard let modelPreparation else { return }
+        let settings = flow.settings
+        settingsWindow.updateModelDownloads(modelPreparation, settings: settings)
+        guard modelPreparation.status(for: model) == .ready else { return }
+        if model == settings.model.rawValue {
+            flow.showNotice("转写模型已就绪")
+            flow.prepareForFirstRecording()
+        }
+        if model == "voiceIsolation" { prepareVoiceIsolationIfEnabled() }
+    }
+
+    private func prepareVoiceIsolationIfEnabled() {
+        guard flow.settings.usesVoiceIsolation, let voiceIsolator, voicePreparation == nil,
+              models.downloads?.isInstalled("voiceIsolation") != false else { return }
+        voicePreparation = Task(priority: .utility) { [weak self] in
+            await voiceIsolator.prepare()
+            self?.voicePreparation = nil
         }
     }
 
@@ -192,6 +301,10 @@ import SpeechFoundation
     }
 
     private func receive(_ event: FunctionKeyGesture.Action) {
+        if event == .start {
+            guard enrollment.active == nil else { return }
+            if flow.canStart { enrollment.stopPlayback() }
+        }
         if event == .confirm || (event == .start && flow.canStart) { overlay.finishKeyboardEdit() }
         flow.handle(event)
         if event == .start { showOverlay() }
@@ -214,6 +327,7 @@ import SpeechFoundation
     #endif
 
     @objc private func runSample() {
+        guard enrollment.active == nil else { return }
         do { flow.trySample(try models.sample(for: flow.settings)) }
         catch { flow.showNotice("示例音频不可用") }
     }

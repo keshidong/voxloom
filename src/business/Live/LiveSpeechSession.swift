@@ -15,6 +15,9 @@ public extension AudioCapturing {
 
 /// Owns one live session. Rx coordinates audio, user actions, cadence and results.
 @MainActor public final class LiveSpeechSession {
+    public typealias PrepareAudio = @Sendable (AudioClip) async throws -> AudioClip
+    public typealias PrepareFinalAudio = PrepareAudio
+
     public private(set) var state = LiveState()
     private let input = PublishSubject<LiveEvent>()
     private let output = BehaviorSubject<LiveState>(value: LiveState())
@@ -22,6 +25,8 @@ public extension AudioCapturing {
     private let scheduler: any SchedulerType
     private let capture: any AudioCapturing
     private let ownsRecognizer: Bool
+    private let prepareFinalAudio: PrepareFinalAudio?
+    private let preparePreviewAudio: PrepareAudio?
     private var authorization: Task<Void, Never>?
     private var recognition: Task<Void, Never>?
     private var clock: (any Disposable)?
@@ -32,13 +37,18 @@ public extension AudioCapturing {
 
     /// Pass `ownsRecognizer: false` when the caller will shut down a recognizer shared across sessions.
     public init(capture: any AudioCapturing, scheduler: any SchedulerType = MainScheduler.instance,
-                ownsRecognizer: Bool = true) {
+                ownsRecognizer: Bool = true, prepareFinalAudio: PrepareFinalAudio? = nil,
+                preparePreviewAudio: PrepareAudio? = nil) {
         self.capture = capture
         self.scheduler = scheduler
         self.ownsRecognizer = ownsRecognizer
+        self.prepareFinalAudio = prepareFinalAudio
+        self.preparePreviewAudio = preparePreviewAudio
         input.observe(on: MainScheduler.asyncInstance)
             .scan(LiveReducer.reduce(LiveState(), .pulse)) { previous, event in
-                LiveReducer.reduce(previous.state, event)
+                LiveReducer.reduce(previous.state, event,
+                    recognizesWhileRecording: prepareFinalAudio == nil || preparePreviewAudio != nil,
+                    requiresFinalRecognition: preparePreviewAudio != nil)
             }.subscribe(onNext: { [weak self] transition in
                 guard let self else { return }
                 state = transition.state
@@ -101,12 +111,17 @@ public extension AudioCapturing {
         case .recognize(let id, let samples):
             guard let recognizer else { return }
             let options = options
+            let isIsolatedPreview = state.phase == .recording && preparePreviewAudio != nil
+            let prepareAudio = state.phase == .finishing ? prepareFinalAudio : preparePreviewAudio
             recognition = Task { [weak self] in
                 do {
-                    let text = try await recognizer.transcribe(AudioClip(samples: samples), options: options).text
+                    let inputAudio = try AudioClip(samples: samples)
+                    let audio = try await prepareAudio?(inputAudio) ?? inputAudio
+                    try Task.checkCancellation()
+                    let text = audio.samples.isEmpty ? "" : try await recognizer.transcribe(audio, options: options).text
                     self?.input.onNext(.result(id, samples.count, text))
                 } catch is CancellationError {} catch {
-                    self?.input.onNext(.failed(id, "识别失败：\(error)"))
+                    self?.input.onNext(isIsolatedPreview ? .previewFailed(id, samples.count) : .failed(id, "识别失败：\(error)"))
                 }
             }
         case .cancelRecognition:

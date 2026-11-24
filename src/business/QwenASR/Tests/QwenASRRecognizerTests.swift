@@ -6,6 +6,8 @@ import Testing
 private final class ASRBoundary: JSONWorkerRunning, @unchecked Sendable {
     let lock = NSLock()
     var calls = 0
+    var preparations = 0
+    func prepare() async throws { lock.withLock { preparations += 1 } }
     func request(_ data: Data) async throws -> Data {
         let request = try JSONSerialization.jsonObject(with: data) as! [String: String]
         #expect(request["context"] == "图书卡 预付费 USD")
@@ -19,6 +21,27 @@ private final class ASRBoundary: JSONWorkerRunning, @unchecked Sendable {
 }
 
 struct QwenASRRecognizerTests {
+    @Test func backgroundPreparationReusesTheWorkerWithoutSubmittingAudio() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data().write(to: root.appendingPathComponent("model.safetensors"))
+        let boundary = ASRBoundary()
+        let provider = QwenASRRecognizer(configuration: .init(executable: URL(fileURLWithPath: "/usr/bin/true"),
+                                                               model: root), temporaryDirectory: root,
+            factory: { boundary })
+        await provider.prepare()
+        await provider.prepare()
+        #expect(boundary.preparations == 1)
+        #expect(boundary.calls == 0)
+        let result = try await provider.transcribe(AudioClip(samples: [1, -1]),
+            options: .init(language: .chinese, context: "图书卡 预付费 USD"))
+        #expect(result.text == "图书卡额度采用预付费模式")
+        #expect(boundary.calls == 1)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: root.path) == ["model.safetensors"])
+        await provider.shutdown()
+    }
+
     @Test func configurationMissingResourcesInvalidResultAndFileErrorsRemainDistinct() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

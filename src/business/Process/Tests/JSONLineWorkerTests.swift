@@ -5,6 +5,22 @@ import Testing
 import Darwin
 
 struct JSONLineWorkerTests {
+    @Test func preparationStartsTheWorkerBeforeTheFirstRequestAndReusesIt() async throws {
+        let script = try #require(Bundle.module.url(forResource: "json-worker", withExtension: "py", subdirectory: "Fixtures"))
+        let marker = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: marker) }
+        let worker = JSONLineWorker(executable: URL(fileURLWithPath: "/usr/bin/python3"),
+                                    arguments: [script.path, "mark-start", marker.path])
+        defer { worker.close() }
+
+        try await worker.prepare()
+        let started = try #require(Int(String(contentsOf: marker, encoding: .utf8)))
+        let first = try JSONSerialization.jsonObject(with: await worker.request(Data(#"{"text":"听写"}"#.utf8))) as! [String: Any]
+        #expect(first["pid"] as? Int == started)
+        #expect(first["text"] as? String == "听写")
+        await worker.shutdown()
+    }
+
     @Test func invalidFramesStartupFailuresAndClosedWorkersFailWithoutLeakingProcesses() async throws {
         let script = try #require(Bundle.module.url(forResource: "json-worker", withExtension: "py", subdirectory: "Fixtures"))
         for mode in ["bad-ready", "malformed-ready", "exit", "oversize"] {

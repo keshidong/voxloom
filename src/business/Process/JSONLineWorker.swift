@@ -3,13 +3,24 @@ import SpeechFoundation
 import Darwin
 
 protocol JSONWorkerRunning: Sendable {
+    func prepare() async throws
     func request(_ data: Data) async throws -> Data
     func close()
     func shutdown() async
 }
 
 extension JSONWorkerRunning {
+    func prepare() async throws {}
     func shutdown() async { close() }
+
+    func prepare(within timeout: Duration) async throws {
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            group.addTask { try await self.prepare() }
+            group.addTask { try await Task.sleep(for: timeout); throw RecognitionError.timedOut }
+            defer { group.cancelAll() }
+            try await group.next()
+        }
+    }
 }
 
 /// Private stdin/stdout RPC. One owned process, serialized requests, bounded frames.
@@ -23,9 +34,19 @@ final class JSONLineWorker: JSONWorkerRunning, @unchecked Sendable {
     private var ready = false
     init(executable: URL, arguments: [String]) { self.executable = executable; self.arguments = arguments }
     deinit { close() }
+
+    func prepare() async throws {
+        _ = try await exchange(nil)
+    }
+
     func request(_ data: Data) async throws -> Data {
         try Task.checkCancellation()
         guard data.count <= 65_536, !data.contains(10) else { throw RecognitionError.invalidResult }
+        return try await exchange(data)
+    }
+
+    private func exchange(_ data: Data?) async throws -> Data {
+        try Task.checkCancellation()
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 queue.async { [self] in
@@ -36,8 +57,13 @@ final class JSONLineWorker: JSONWorkerRunning, @unchecked Sendable {
                             guard message.ready else { throw RecognitionError.modelUnavailable }
                             ready = true
                         }
-                        try io.input.write(contentsOf: data + Data([10]))
-                        let response = try readLine(io.output)
+                        let response: Data
+                        if let data {
+                            try io.input.write(contentsOf: data + Data([10]))
+                            response = try readLine(io.output)
+                        } else {
+                            response = Data()
+                        }
                         if isClosed { throw CancellationError() }
                         continuation.resume(returning: response)
                     } catch {

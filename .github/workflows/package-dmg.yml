@@ -1,0 +1,95 @@
+name: Package Voxloom DMG
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      configuration:
+        description: Build configuration
+        type: choice
+        options:
+          - release
+          - debug
+        default: release
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      CONFIGURATION: ${{ inputs.configuration || 'release' }}
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+      UV_NO_CACHE: 'true'
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check build environment
+        run: |
+          test "$(uname -m)" = arm64
+          xcodebuild -version
+          df -h .
+
+      - name: Test packaging scripts
+        run: python3 -m unittest discover -s scripts -p 'test_*.py'
+
+      - name: Prepare app runtimes
+        run: |
+          bash scripts/prepare-demo.sh --runtime-only
+          python3 scripts/prepare-voice-isolation.py --runtime-only
+
+      - name: Build and verify DMG
+        run: |
+          python3 scripts/make-dmg.py --configuration "$CONFIGURATION" --voice-isolation \
+            --output "$RUNNER_TEMP/Voxloom-${CONFIGURATION}-arm64.dmg"
+
+      - name: Upload DMG
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          path: ${{ runner.temp }}/Voxloom-${{ env.CONFIGURATION }}-arm64.dmg
+          archive: false
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 90
+
+  publish:
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    needs: package
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Retrieve verified DMG
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: Voxloom-release-arm64.dmg
+          path: distribution
+
+      - name: Publish DMG to GitHub Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          asset=Voxloom-release-arm64.dmg
+          dmg="distribution/$asset"
+          if [ ! -s "$dmg" ] || [ "$(stat -c %s "$dmg")" -ge 2147483648 ]; then
+            echo "::error::Release requires a nonempty DMG smaller than 2 GiB."
+            exit 1
+          fi
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json assets \
+            --jq '.assets[].name' > "$RUNNER_TEMP/release-assets"; then
+            if ! grep -Fxq "$asset" "$RUNNER_TEMP/release-assets"; then
+              gh release upload "$GITHUB_REF_NAME" "$dmg" --repo "$GITHUB_REPOSITORY"
+            fi
+          else
+            gh release create "$GITHUB_REF_NAME" "$dmg" --repo "$GITHUB_REPOSITORY" \
+              --verify-tag --generate-notes
+          fi

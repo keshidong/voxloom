@@ -1,7 +1,7 @@
 import AppKit
 import SpeechFoundation
 
-@MainActor final class SettingsWindow: NSWindowController, NSTextFieldDelegate {
+@MainActor final class SettingsWindow: NSWindowController, NSTextFieldDelegate, NSWindowDelegate {
     let recognition = NSPopUpButton()
     let correction = NSPopUpButton()
     let language = NSPopUpButton()
@@ -9,17 +9,30 @@ import SpeechFoundation
     let gpu = NSButton(checkboxWithTitle: "使用 GPU 加速 Whisper 和纠错", target: nil, action: nil)
     let inputContext = NSButton(checkboxWithTitle: "用光标附近的文字辅助转写和纠错", target: nil, action: nil)
     let conversationContext = NSButton(checkboxWithTitle: "用当前对话的近期消息辅助转写", target: nil, action: nil)
+    let voiceIsolation = NSButton(checkboxWithTitle: "只保留我的声音（实验）", target: nil, action: nil)
     let enableAccessibility = NSButton(title: "启用辅助功能", target: nil, action: nil)
     private let permissionStatus = NSTextField(labelWithString: "")
+    private let voiceStatus = NSTextField(labelWithString: "")
+    private let recognitionDownload = ModelDownloadRow()
+    private let correctionDownload = ModelDownloadRow()
+    private let isolationDownload = ModelDownloadRow()
+    private var voiceRows: [(kind: VoiceSampleKind, label: NSTextField, record: NSButton,
+                             play: NSButton, remove: NSButton)] = []
     var onChange: ((DictationSettings) -> Void)?
+    var onRecordVoice: ((VoiceSampleKind) -> Void)?
+    var onPlayVoice: ((VoiceSampleKind) -> Void)?
+    var onRemoveVoice: ((VoiceSampleKind) -> Void)?
+    var onClose: (() -> Void)?
+    var onRetryModel: ((String) -> Void)?
 
-    init(settings: DictationSettings) {
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 440, height: 406),
+    init(settings: DictationSettings, hasModelDownloads: Bool = false) {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 460, height: hasModelDownloads ? 756 : 660),
                               styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.title = "Voxloom 设置"
         window.isReleasedWhenClosed = false
         window.center()
         super.init(window: window)
+        window.delegate = self
         build()
         load(settings)
     }
@@ -49,7 +62,7 @@ import SpeechFoundation
                                   (language, "语言"), (vocabulary, "词汇提示")] {
             control.setAccessibilityLabel(label)
         }
-        for control in [recognition, correction, language, gpu, inputContext, conversationContext] {
+        for control in [recognition, correction, language, gpu, inputContext, conversationContext, voiceIsolation] {
             control.target = self
             control.action = #selector(changed)
         }
@@ -72,8 +85,10 @@ import SpeechFoundation
         permissions.spacing = 10
         let separator = NSBox()
         separator.boxType = .separator
-        let stack = NSStackView(views: [heading, hint, models, gpu, inputContext, conversationContext,
-                                       separator, permissionHeading, permissions])
+        let voiceSection = makeVoiceSection()
+        let stack = NSStackView(views: [heading, hint, models, recognitionDownload, correctionDownload,
+                                       gpu, inputContext, conversationContext,
+                                       separator, voiceSection, permissionHeading, permissions])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 12
@@ -85,9 +100,74 @@ import SpeechFoundation
             stack.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -24),
             stack.topAnchor.constraint(equalTo: content.topAnchor, constant: 20),
             stack.bottomAnchor.constraint(lessThanOrEqualTo: content.bottomAnchor, constant: -16),
-            separator.widthAnchor.constraint(equalTo: stack.widthAnchor)
+            separator.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            voiceSection.widthAnchor.constraint(equalTo: stack.widthAnchor)
         ])
     }
+
+    private func makeVoiceSection() -> NSView {
+        let heading = NSTextField(labelWithString: "人声分离")
+        heading.font = .systemFont(ofSize: 17, weight: .semibold)
+        let prompt = NSTextField(labelWithString: "录制时可以读这句")
+        prompt.textColor = .secondaryLabelColor
+        let example = NSTextField(wrappingLabelWithString: "今天我想试试语音输入。Can you hear me clearly?")
+        voiceStatus.textColor = .secondaryLabelColor
+        voiceRows = VoiceSampleKind.allCases.enumerated().map { index, kind in
+            let label = NSTextField(labelWithString: kind.label)
+            let record = NSButton(title: "录制", target: self, action: #selector(recordVoice(_:)))
+            let play = NSButton(title: "试听", target: self, action: #selector(playVoice(_:)))
+            let remove = NSButton(title: "删除", target: self, action: #selector(removeVoice(_:)))
+            record.tag = index
+            play.tag = index
+            remove.tag = index
+            record.setAccessibilityLabel("录制\(kind.label)样本")
+            remove.setAccessibilityLabel("删除\(kind.label)样本")
+            return (kind, label, record, play, remove)
+        }
+        let rows = NSGridView(views: voiceRows.map { [$0.label, $0.record, $0.play, $0.remove] })
+        rows.rowSpacing = 4
+        rows.columnSpacing = 12
+        let section = NSStackView(views: [heading, voiceIsolation, isolationDownload, prompt, example, rows, voiceStatus])
+        section.orientation = .vertical
+        section.alignment = .leading
+        section.spacing = 6
+        example.widthAnchor.constraint(lessThanOrEqualTo: section.widthAnchor).isActive = true
+        return section
+    }
+
+    func updateModelDownloads(_ setup: ModelPreparation, settings: DictationSettings) {
+        let model = settings.model
+        recognitionDownload.render(model.title, status: setup.status(for: model.rawValue))
+        correctionDownload.render("纠错模型", status: settings.correctsText ? setup.status(for: "correction") : nil)
+        isolationDownload.render("人声分离模型", status: settings.usesVoiceIsolation ? setup.status(for: "voiceIsolation") : nil)
+        recognitionDownload.onRetry = { [weak self] in self?.onRetryModel?(model.rawValue) }
+        correctionDownload.onRetry = { [weak self] in self?.onRetryModel?("correction") }
+        isolationDownload.onRetry = { [weak self] in self?.onRetryModel?("voiceIsolation") }
+    }
+
+    func updateVoiceEnrollment(_ enrollment: VoiceEnrollment, modelAvailable: Bool) {
+        voiceIsolation.isEnabled = modelAvailable || voiceIsolation.state == .on
+        voiceStatus.stringValue = enrollment.notice ?? (modelAvailable
+            ? "每段录 3～8 秒。样本保存在本机。"
+            : "此安装包未包含人声分离模型")
+        for row in voiceRows {
+            let saved = enrollment.store.contains(row.kind)
+            let active = enrollment.active == row.kind
+            let playing = enrollment.playing == row.kind
+            row.label.stringValue = row.kind.label + (saved ? " · 已录" : "")
+            row.record.title = active ? (enrollment.isRecording ? "保存" : "取消") : (saved ? "重录" : "录制")
+            row.record.isEnabled = active || enrollment.active == nil
+            row.play.title = playing ? "停止" : "试听"
+            row.play.setAccessibilityLabel((playing ? "停止试听" : "试听") + row.kind.label + "样本")
+            row.play.isEnabled = saved && enrollment.active == nil
+            row.remove.isEnabled = saved && enrollment.active == nil
+        }
+    }
+
+    func windowWillClose(_ notification: Notification) { onClose?() }
+    @objc private func recordVoice(_ sender: NSButton) { onRecordVoice?(VoiceSampleKind.allCases[sender.tag]) }
+    @objc private func playVoice(_ sender: NSButton) { onPlayVoice?(VoiceSampleKind.allCases[sender.tag]) }
+    @objc private func removeVoice(_ sender: NSButton) { onRemoveVoice?(VoiceSampleKind.allCases[sender.tag]) }
 
     private func load(_ settings: DictationSettings) {
         recognition.selectItem(at: RecognitionModel.allCases.firstIndex(of: settings.model) ?? 0)
@@ -97,6 +177,7 @@ import SpeechFoundation
         gpu.state = settings.usesGPU ? .on : .off
         inputContext.state = settings.usesInputContext ? .on : .off
         conversationContext.state = settings.usesConversationContext ? .on : .off
+        voiceIsolation.state = settings.usesVoiceIsolation ? .on : .off
     }
 
     func controlTextDidChange(_ notification: Notification) { changed() }
@@ -111,6 +192,7 @@ import SpeechFoundation
         selected.usesGPU = gpu.state == .on
         selected.usesInputContext = inputContext.state == .on
         selected.usesConversationContext = conversationContext.state == .on
+        selected.usesVoiceIsolation = voiceIsolation.state == .on
         onChange?(selected)
     }
 }

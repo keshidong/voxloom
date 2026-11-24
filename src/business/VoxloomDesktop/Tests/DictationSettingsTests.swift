@@ -34,6 +34,7 @@ struct DictationSettingsTests {
         settings.usesGPU = false
         settings.usesInputContext = false
         settings.usesConversationContext = true
+        settings.usesVoiceIsolation = true
         settings.vocabulary = "Core Audio"
         settings.save(to: defaults)
         #expect(DictationSettings(defaults: try #require(UserDefaults(suiteName: identifier))) == settings)

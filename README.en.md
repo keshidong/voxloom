@@ -10,9 +10,11 @@ Run `python3 scripts/make-demo.py --product voxloom` to build `Voxloom.app`. The
 
 Pass `--configuration` (`-c`) with `debug` or `release` when packaging. Release is the default. The debug build has its own app name and bundle ID. Its menu bar includes an ASR context log with the latest dictation's draft excerpt, recent message excerpts, exact recognition prompt, and UTF-8 byte count. The message status shows where reading stopped. The app keeps this log in memory and clears it when you quit or choose Clear.
 
+Builds with the optional voice isolation model include the experimental “Keep only my voice” setting, which is off by default. Record at least one 3–8 second clip. You can read the same Chinese-English sentence shown in settings for each speaking volume. Quiet, normal, and loud samples can be recorded, played back, replaced, or deleted separately. With isolation enabled, Voxloom filters new audio locally and updates the transcript preview while you hold Fn. Releasing Fn runs full-recording isolation and transcription for the final text.
+
 - Place the cursor in the target field and hold Fn (Globe) on its own for about 0.18 seconds to start recording. On release, Voxloom transcribes the remaining audio. If correction is enabled, Voxloom waits up to three more seconds and uses the available draft at the deadline. It requests a paste when the original target field is still focused. The draft is kept if focus changes, recording is interrupted, or permissions are missing. A recording can last up to 60 seconds.
 - During recording, press E while holding Fn to open the draft editor on release. Once transcription finishes, press Enter to insert into the original input field or Shift+Enter to add a new line. If Voxloom cannot verify the original field, it keeps the text in the draft. Press Esc while holding Fn to discard the current recording and restore the previous draft. Release Fn to record again.
-- Voxloom submits the first preview as soon as it has about a second of audio and detects voice activity. Qwen3-ASR loads on first use and stays available for later recordings. Voxloom releases the process when the next recording uses a different engine or when the app quits.
+- Voxloom submits the first preview as soon as it has about a second of audio and detects voice activity. At launch, Voxloom loads the selected Qwen3-ASR model and the enabled voice isolation model in the background. Preparation uses no microphone audio. Dictation reuses the resident workers. Voxloom releases the Qwen process when the next recording uses a different engine or when the app quits.
 - The floating bar shows recording duration, audio level, progress, and the latest line of transcription. Open the draft to see the full text. The gear opens settings and the menu bar waveform brings back the floating bar. Holding Fn with an uninserted draft adds a new line, so both recordings can be inserted together. Canceling a continuation restores the earlier draft. A recording after an insertion request starts with an empty draft.
 - Select the draft button to edit, copy, clear, or try the bundled example. In the draft editor, Enter inserts the text and Shift+Enter starts a new line. While the target app is focused, double-tapping Fn also inserts the draft. Voxloom uses the target app's normal paste behavior to replace selected text. If the frontmost app changes before insertion, the draft remains available to insert or copy.
 - Settings offer Qwen3-ASR or Whisper, language selection, and vocabulary hints. Qwen correction is off by default and can be enabled in Settings. Existing saved choices still apply. [Full accuracy evaluation](docs/reports/transcription-evaluation-2026-11-23.md)
@@ -89,6 +91,8 @@ Building from source requires Apple Silicon, macOS 14 or later, Swift 6, and Pyt
 bash scripts/prepare-demo.sh                  # Install pinned resources and build. Requires network access.
 python3 scripts/make-demo.py                  # Rebuild the 0.3.2 demo from installed resources.
 python3 scripts/make-demo.py --product voxloom # Build the standalone desktop app.
+python3 scripts/prepare-voice-isolation.py   # Prepare the optional offline isolation model.
+python3 scripts/make-demo.py --product voxloom -c debug --voice-isolation
 python3 scripts/check.py                     # Swift unit, module, and UI checks with coverage gates.
 python3 scripts/check-python.py              # Python worker protocol tests and coverage.
 python3 scripts/smoke-qwen.py                 # Run both real models and sample short-clip resource usage.
@@ -96,6 +100,22 @@ python3 scripts/smoke-qwen.py --app 'voxloom 0.3.2.app' # Run the tests with bun
 python3 scripts/smoke-whisper.py              # Run the Whisper API and CLI end-to-end checks.
 ```
 
-`scripts/prepare-qwen.py` installs the pinned Qwen revisions and dependencies and checks SHA-256 hashes. Resources go in `.runtime/` and `models/` without sudo. In offline mode, audio and text stay on the device and recognition and correction use the installed resources. The app is signed ad hoc for local use. The `voice-input` CLI also supports Whisper file transcription.
+`scripts/prepare-qwen.py` installs the pinned Qwen revisions and dependencies and checks SHA-256 hashes. Development resources go in `.runtime/` and `models/`. Once models are installed, recognition, correction, and voice isolation run locally. Audio and text stay on the device. The `voice-input` CLI also supports Whisper file transcription.
 
 The [0.3.2 verification summary](docs/reports/0.3.2/README.md) and the [first Whisper acceptance report](docs/acceptance-01.md) document the test results. Complete local logs go in `.build/reports/`. Real-model end-to-end tests are outside the unit and module coverage figures. See the [third-party resources](docs/third-party.md) for model and dependency sources.
+
+### Package a macOS DMG
+
+Pushing a `v*` version tag builds a Release DMG for Apple Silicon and publishes it on the corresponding **Releases** page. Use **Actions → Package Voxloom DMG → Run workflow** to select a Release or Debug build manually. Workflow artifacts are retained for up to 90 days.
+
+The DMG includes the app, inference runtimes, and an `Applications` shortcut. On first launch or when switching recognition models, Settings shows download progress. Dictation is available once the selected model passes SHA-256 verification. The correction and voice isolation models download when enabled. Failed downloads can be retried in Settings. Models in `~/Library/Application Support/dev.voxloom.app/Models` are reused across upgrades that require the same model versions.
+
+The Release bundle ID is `dev.voxloom.app` and the Debug bundle ID is `dev.voxloom.app.debug`. The app is signed ad hoc and has no Apple notarization.
+
+To build the Release DMG locally, run the following commands.
+
+```bash
+bash scripts/prepare-demo.sh --runtime-only
+python3 scripts/prepare-voice-isolation.py --runtime-only
+python3 scripts/make-dmg.py --voice-isolation --output .build/distribution/Voxloom-release-arm64.dmg
+```

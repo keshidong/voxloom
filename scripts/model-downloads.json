@@ -1,0 +1,33 @@
+{
+  "qwen": [
+    {"path": "Qwen3-ASR-1.7B-4bit/model.safetensors", "url": "https://huggingface.co/mlx-community/Qwen3-ASR-1.7B-4bit/resolve/78a389c776a5483b2d0d4ea5494e11012e0d6159/model.safetensors", "sha256": "9848eaf7a5c1589c671b35035ac27b72e248dd0c604eacae547e7e403d29db45", "bytes": 1603081617},
+    {"path": "Qwen3-ASR-1.7B-4bit/tokenizer_config.json", "url": "https://huggingface.co/mlx-community/Qwen3-ASR-1.7B-4bit/resolve/78a389c776a5483b2d0d4ea5494e11012e0d6159/tokenizer_config.json", "sha256": "4942d005604266809309cabc9f4e9cb89ce855d59b14681fdc0e1cc62ea26c4c", "bytes": 12487},
+    {"path": "Qwen3-ASR-1.7B-4bit/chat_template.json", "url": "https://huggingface.co/mlx-community/Qwen3-ASR-1.7B-4bit/resolve/78a389c776a5483b2d0d4ea5494e11012e0d6159/chat_template.json", "sha256": "75a8cfca24f00de72d796fbfed6858fc9614ef3dabd8696684cc3bc03a9c58ff", "bytes": 1161},
+    {"path": "Qwen3-ASR-1.7B-4bit/config.json", "url": "https://huggingface.co/mlx-community/Qwen3-ASR-1.7B-4bit/resolve/78a389c776a5483b2d0d4ea5494e11012e0d6159/config.json", "sha256": "539c6c9d482349066e2e740241e39896f3bf4de0866c245f6539c85dbb19d93c", "bytes": 7188},
+    {"path": "Qwen3-ASR-1.7B-4bit/generation_config.json", "url": "https://huggingface.co/mlx-community/Qwen3-ASR-1.7B-4bit/resolve/78a389c776a5483b2d0d4ea5494e11012e0d6159/generation_config.json", "sha256": "1da527824d81e07118facff437e03f2e24a23311e3bdeb2368973fe77e5f275c", "bytes": 142},
+    {"path": "Qwen3-ASR-1.7B-4bit/README.md", "url": "https://huggingface.co/mlx-community/Qwen3-ASR-1.7B-4bit/resolve/78a389c776a5483b2d0d4ea5494e11012e0d6159/README.md", "sha256": "4d7f16d0a01cd626a3d5291b77249f135eeedd9b1b259d17716cc6b3ef7365cb", "bytes": 1008},
+    {"path": "Qwen3-ASR-1.7B-4bit/merges.txt", "url": "https://huggingface.co/mlx-community/Qwen3-ASR-1.7B-4bit/resolve/78a389c776a5483b2d0d4ea5494e11012e0d6159/merges.txt", "sha256": "8831e4f1a044471340f7c0a83d7bd71306a5b867e95fd870f74d0c5308a904d5", "bytes": 1671853},
+    {"path": "Qwen3-ASR-1.7B-4bit/vocab.json", "url": "https://huggingface.co/mlx-community/Qwen3-ASR-1.7B-4bit/resolve/78a389c776a5483b2d0d4ea5494e11012e0d6159/vocab.json", "sha256": "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910", "bytes": 2776833},
+    {"path": "Qwen3-ASR-1.7B-4bit/model.safetensors.index.json", "url": "https://huggingface.co/mlx-community/Qwen3-ASR-1.7B-4bit/resolve/78a389c776a5483b2d0d4ea5494e11012e0d6159/model.safetensors.index.json", "sha256": "2612ab715223843b3dec0742737bc85f50914ca1484ade45955f99b4e012f2bb", "bytes": 78968},
+    {"path": "Qwen3-ASR-1.7B-4bit/preprocessor_config.json", "url": "https://huggingface.co/mlx-community/Qwen3-ASR-1.7B-4bit/resolve/78a389c776a5483b2d0d4ea5494e11012e0d6159/preprocessor_config.json", "sha256": "45e120a4eda2c20c5d7f2ea9354e63536bf35e27aa573fb7cdf78017b378770d", "bytes": 330}
+  ],
+  "correction": [
+    {"path": "Qwen3-4B-Instruct-2507-Q4_K_M.gguf", "url": "https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/a06e946bb6b655725eafa393f4a9745d460374c9/Qwen3-4B-Instruct-2507-Q4_K_M.gguf", "sha256": "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597", "bytes": 2497281120}
+  ],
+  "voiceIsolation": [
+    {"path": "voxlock/enroll.onnx", "url": "https://huggingface.co/arbazsiddiqui/voxlock/resolve/2413b292bc2c337bfc19a9802aaf3e011e68e9c4/onnx/v2/enroll.onnx", "sha256": "81f305c9b7a32f13d1401f53bb4c6301826a607c9e807e60912f36ef1b9fae29", "bytes": 21023799},
+    {"path": "voxlock/chunk_int8.onnx", "url": "https://huggingface.co/arbazsiddiqui/voxlock/resolve/2413b292bc2c337bfc19a9802aaf3e011e68e9c4/onnx/v2/chunk_int8.onnx", "sha256": "c50ffdc8d723fd4f91cb08889f3d0143491f95967b705f35c444a0b4afe88172", "bytes": 56560589}
+  ],
+  "whisperTurbo": [
+    {"path": "ggml-large-v3-turbo-q5_0.bin", "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin?download=true", "sha256": "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2", "bytes": 574041195},
+    {"path": "ggml-silero-v5.1.2.bin", "url": "https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v5.1.2.bin?download=true", "sha256": "29940d98d42b91fbd05ce489f3ecf7c72f0a42f027e4875919a28fb4c04ea2cf", "bytes": 885098}
+  ],
+  "whisperBase": [
+    {"path": "ggml-base.bin", "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin?download=true", "sha256": "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe", "bytes": 147951465},
+    {"path": "ggml-silero-v5.1.2.bin", "url": "https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v5.1.2.bin?download=true", "sha256": "29940d98d42b91fbd05ce489f3ecf7c72f0a42f027e4875919a28fb4c04ea2cf", "bytes": 885098}
+  ],
+  "whisperTiny": [
+    {"path": "ggml-tiny.bin", "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin?download=true", "sha256": "be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21", "bytes": 77691713},
+    {"path": "ggml-silero-v5.1.2.bin", "url": "https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v5.1.2.bin?download=true", "sha256": "29940d98d42b91fbd05ce489f3ecf7c72f0a42f027e4875919a28fb4c04ea2cf", "bytes": 885098}
+  ]
+}

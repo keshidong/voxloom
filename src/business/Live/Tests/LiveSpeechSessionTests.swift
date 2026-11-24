@@ -34,6 +34,53 @@ actor FixedRecognizer: SpeechRecognizer {
 }
 
 @MainActor struct LiveSpeechSessionTests {
+    @Test(arguments: [true, false])
+    func isolatedPreviewUsesFilteredAudioAndStillFinalizesTheOriginalRecording(previewAvailable: Bool) async throws {
+        let capture = FakeCapture()
+        let recognizer = AudioRecorder()
+        let raw = Array(repeating: Int16(1000), count: AudioClip.sampleRate)
+        let session = LiveSpeechSession(capture: capture, prepareFinalAudio: { clip in
+            #expect(clip.samples == raw)
+            return try AudioClip(samples: [321, -321])
+        }, preparePreviewAudio: { clip in
+            #expect(clip.samples == raw)
+            guard previewAvailable else { throw RecognitionError.invalidResult }
+            return try AudioClip(samples: [123, -123])
+        })
+        session.start(recognizer: recognizer)
+        try await waitUntil { session.state.phase == .recording }
+        capture.sink?(raw)
+        try await waitUntil { session.state.submitted == raw.count && !session.state.busy }
+        #expect(session.state.phase == .recording)
+        #expect(await recognizer.clips == (previewAvailable ? [[123, -123]] : []))
+
+        session.stop()
+        try await waitUntil { session.state.phase == .idle }
+        #expect(await recognizer.clips == (previewAvailable ? [[123, -123], [321, -321]] : [[321, -321]]))
+        await session.shutdown()
+    }
+
+    @Test(arguments: [true, false])
+    func finalAudioPreparationSkipsRawPreviewsAndSilentResults(containsTarget: Bool) async throws {
+        let capture = FakeCapture()
+        let recognizer = AudioRecorder()
+        let session = LiveSpeechSession(capture: capture, prepareFinalAudio: { _ in
+            try AudioClip(samples: containsTarget ? [321, -321] : [])
+        })
+        session.start(recognizer: recognizer)
+        try await waitUntil { session.state.phase == .recording }
+        capture.sink?(Array(repeating: 1000, count: 16_000))
+        try await waitUntil { session.state.samples.count == 16_000 }
+        let hasRawPreview = session.state.busy
+        #expect(!hasRawPreview)
+        session.stop()
+        try await waitUntil { session.state.phase == .idle }
+        let calls = await recognizer.clips
+        let expected: [[Int16]] = containsTarget ? [[321, -321]] : []
+        #expect(calls == expected)
+        await session.shutdown()
+    }
+
     func waitUntil(_ condition: () -> Bool) async throws {
         let deadline = ContinuousClock.now.advanced(by: .seconds(3))
         while !condition() {
@@ -124,5 +171,14 @@ actor FixedRecognizer: SpeechRecognizer {
         await quitting.value
         #expect(finishedBeforeReply)
         #expect(capture.stopped)
+    }
+}
+
+private actor AudioRecorder: SpeechRecognizer {
+    private(set) var clips: [[Int16]] = []
+
+    func transcribe(_ audio: AudioClip, options: RecognitionOptions) async throws -> Transcript {
+        clips.append(audio.samples)
+        return Transcript(text: "voice")
     }
 }

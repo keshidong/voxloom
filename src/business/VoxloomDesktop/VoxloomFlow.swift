@@ -42,7 +42,9 @@ import AppKit
     var canStart: Bool {
         heldRecording == nil && startup == nil && insertionRequest == nil && (state?.live.phase ?? .idle) == .idle
     }
-    var canTrySample: Bool { canStart && (didSendInsertion || state?.text.isEmpty != false) }
+    var canTrySample: Bool {
+        recognitionAvailable(settings) && canStart && (didSendInsertion || state?.text.isEmpty != false)
+    }
     var canInsert: Bool {
         guard heldRecording == nil, startup == nil, let state, !didSendInsertion,
               !state.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
@@ -56,9 +58,12 @@ import AppKit
     private let corrector: (DictationSettings) -> (any TextCorrecting)?
     private let insertion: CaretInsertion
     private let readContext: (DictationSettings) -> (@Sendable () async -> DesktopContextReading)?
+    private let prepareVoiceIsolation: () throws -> VoiceIsolationPreparation
+    private let recognitionAvailable: (DictationSettings) -> Bool
     private var session: DictationSession?
     private var observation: (any Disposable)?
     private var startup: Task<Void, Never>?
+    private var enginePreparation: Task<Void, Never>?
     private var activeEngine: (configuration: RecognitionEngine, recognizer: any SpeechRecognizer)?
     private var heldRecording: HeldRecording?
     private var editedTarget: CapturedTarget?
@@ -67,19 +72,29 @@ import AppKit
     init(settings: DictationSettings, capture: @escaping () -> any AudioCapturing,
          recognizer: @escaping (DictationSettings) -> any SpeechRecognizer,
          corrector: @escaping (DictationSettings) -> (any TextCorrecting)?, insertion: CaretInsertion,
-         readContext: @escaping (DictationSettings) -> (@Sendable () async -> DesktopContextReading)? = { _ in nil }) {
+         readContext: @escaping (DictationSettings) -> (@Sendable () async -> DesktopContextReading)? = { _ in nil },
+         prepareVoiceIsolation: @escaping () throws -> VoiceIsolationPreparation = {
+             throw VoiceIsolationSetupError.unavailable
+         },
+         recognitionAvailable: @escaping (DictationSettings) -> Bool = { _ in true }) {
         self.settings = settings
         self.capture = capture
         makeRecognizer = recognizer
         self.corrector = corrector
         self.insertion = insertion
         self.readContext = readContext
+        self.prepareVoiceIsolation = prepareVoiceIsolation
+        self.recognitionAvailable = recognitionAvailable
     }
 
     func handle(_ action: FunctionKeyGesture.Action) {
         switch action {
         case .start:
             guard canStart else { return }
+            guard recognitionAvailable(settings) else {
+                showNotice("转写模型尚未就绪，请在设置中查看下载进度")
+                return
+            }
             begin(capture(), held: true)
         case .stop: stopRecording(automatic: true)
         case .interrupted: stopRecording(automatic: false)
@@ -108,6 +123,13 @@ import AppKit
     func apply(_ settings: DictationSettings) {
         self.settings = settings
         onChange?()
+    }
+
+    func prepareForFirstRecording() {
+        guard canStart, settings.model == .qwen, activeEngine == nil, recognitionAvailable(settings) else { return }
+        let recognizer = makeRecognizer(settings)
+        activeEngine = (RecognitionEngine(settings), recognizer)
+        enginePreparation = Task(priority: .utility) { await recognizer.prepare() }
     }
 
     func edit(_ text: String, basedOn visibleText: String, replacedRange: NSRange? = nil) {
@@ -154,6 +176,13 @@ import AppKit
     private func begin(_ audio: any AudioCapturing, held: Bool) {
         let previous = session
         let selected = settings
+        let voiceIsolation: VoiceIsolationPreparation?
+        do {
+            voiceIsolation = held && selected.usesVoiceIsolation ? try prepareVoiceIsolation() : nil
+        } catch {
+            showNotice(error.localizedDescription)
+            return
+        }
         let existingText = didSendInsertion ? "" : (previous?.state.text ?? "")
         let usesContext = selected.usesInputContext || selected.usesConversationContext
         let sourceReader = held && usesContext ? readContext(selected) : nil
@@ -174,7 +203,9 @@ import AppKit
         #else
         let contextReader = snapshotReader
         #endif
-        let next = DictationSession(live: LiveSpeechSession(capture: audio, ownsRecognizer: false), existingText: existingText,
+        let live = LiveSpeechSession(capture: audio, ownsRecognizer: false,
+                                     prepareFinalAudio: voiceIsolation?.final, preparePreviewAudio: voiceIsolation?.preview)
+        let next = DictationSession(live: live, existingText: existingText,
                                     readContext: contextReader, recognitionPromptByteLimit: selected.model.promptByteLimit)
         notice = nil
         usesSample = !held
@@ -216,7 +247,11 @@ import AppKit
     private func releaseRecognizer() async {
         let engine = activeEngine
         activeEngine = nil
+        let preparation = enginePreparation
+        enginePreparation = nil
+        preparation?.cancel()
         await engine?.recognizer.shutdown()
+        await preparation?.value
     }
 
     private func stopRecording(automatic: Bool) {
@@ -291,5 +326,21 @@ import AppKit
             didSendInsertion = true
             notice = "已发送插入请求"
         } catch { notice = error.localizedDescription }
+    }
+}
+
+struct VoiceIsolationPreparation {
+    let preview: LiveSpeechSession.PrepareAudio
+    let final: LiveSpeechSession.PrepareAudio
+}
+
+enum VoiceIsolationSetupError: LocalizedError {
+    case unavailable, missingSamples
+
+    var errorDescription: String? {
+        switch self {
+        case .unavailable: "人声分离模型尚未安装"
+        case .missingSamples: "先在设置里录一段你的声音"
+        }
     }
 }
