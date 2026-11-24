@@ -11,6 +11,7 @@ import wave
 import numpy as np
 
 from models import load_matcher
+from residual import suppress_residual
 from separate import SAMPLE_RATE
 
 
@@ -63,6 +64,8 @@ def main():
                     preview = matcher.preview(enrollment)
                     preview_session = session
                     filtered = preview.extend(audio)
+            if config["model"] == "voxlock":
+                filtered = suppress_residual(audio, filtered)
             write_pcm(request["output"], filtered)
             print('{"ok":true}', flush=True)
         except (ValueError, RuntimeError, OSError, KeyError, AttributeError, wave.Error):

@@ -54,7 +54,7 @@ def main():
         subprocess.run([str(uv), "pip", "install", "--python", str(python), "--only-binary", ":all:",
                         "--target", str(stage / "site"), "voxlock==1.2.0", "onnxruntime==1.24.4",
                         "numpy==2.2.6", "huggingface-hub==0.33.5"], env=environment, check=True)
-        for name in ("voice-isolation", "voice_worker.py", "models.py", "separate.py", "voxlock_model.py"):
+        for name in ("voice-isolation", "voice_worker.py", "models.py", "residual.py", "separate.py", "voxlock_model.py"):
             shutil.copy2(ROOT / "scripts/speech-separation" / name, stage / name)
         (stage / "voice-isolation").chmod(0o755)
         (stage / "engine.json").write_text(json.dumps({"model": "voxlock", "backend": "cpu", "threads": 4}) + "\n")
