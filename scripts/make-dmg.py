@@ -11,7 +11,7 @@ import tempfile
 ROOT = Path(__file__).resolve().parent.parent
 
 
-def package_disk_image(configuration, output, voice_isolation):
+def package_disk_image(configuration, output, voice_isolation, version=None, build_number=None):
     app_name = "Voxloom Debug" if configuration == "debug" else "Voxloom"
     build = ROOT / ".build"
     build.mkdir(exist_ok=True)
@@ -27,6 +27,10 @@ def package_disk_image(configuration, output, voice_isolation):
         ]
         if voice_isolation:
             command.append("--voice-isolation")
+        if version is not None:
+            command.extend(["--version", version])
+        if build_number is not None:
+            command.extend(["--build-number", build_number])
         subprocess.run(command, cwd=ROOT, check=True)
         (source / "Applications").symlink_to("/Applications", target_is_directory=True)
         # hdiutil inherits the source directory's permissions for the mounted volume.
@@ -45,12 +49,15 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("-c", "--configuration", choices=("debug", "release"), default="release")
     parser.add_argument("--voice-isolation", action="store_true")
+    parser.add_argument("--version", help="App version in major.minor.patch form")
+    parser.add_argument("--build-number", help="Positive integer identifying this build")
     parser.add_argument("--output", type=Path, required=True)
     arguments = parser.parse_args()
     if arguments.output.suffix != ".dmg":
         parser.error("--output must end in .dmg")
     output = arguments.output.absolute()
-    package_disk_image(arguments.configuration, output, arguments.voice_isolation)
+    package_disk_image(arguments.configuration, output, arguments.voice_isolation,
+                       version=arguments.version, build_number=arguments.build_number)
     print(output)
 
 

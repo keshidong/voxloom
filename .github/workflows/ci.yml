@@ -43,6 +43,9 @@ jobs:
       - name: Check Python worker protocol and coverage
         run: python3 scripts/check-python.py
 
+      - name: Test packaging and version selection
+        run: python3 -m unittest discover -s scripts -p 'test_*.py'
+
       - name: Build Swift products
         run: |
           mkdir -p .build/reports
