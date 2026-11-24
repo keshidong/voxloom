@@ -7,6 +7,8 @@ public struct FunctionKeyGesture: Sendable {
 
     public init() {}
 
+    public var isHolding: Bool { phase == .holding }
+
     public mutating func press() -> Bool {
         guard phase == .released else { return false }
         phase = .pressed

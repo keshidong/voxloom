@@ -6,6 +6,67 @@ import Testing
 @testable import VoxloomDesktop
 
 @MainActor struct KeyboardBoundaryTests {
+    @Test func editChordFiltersBothKeyEventsWithoutEndingTheHold() throws {
+        _ = NSApplication.shared
+        let initial = Date(timeIntervalSince1970: 0)
+        let clock = HistoricalScheduler(initialClock: initial)
+        var actions: [FunctionKeyGesture.Action] = []
+        var shortcuts: [DictationKeyInput.RecordingShortcut] = []
+        let input = DictationKeyInput(scheduler: clock, canConfirm: { false }, recordingShortcut: {
+            shortcuts.append($0)
+            return true
+        }, action: { actions.append($0) })
+        var filter: ((NSEvent) -> Bool)?
+        let monitor = DictationKeyMonitor(input: input, isTrusted: { true }, filterGlobal: { handler, _ in
+            filter = handler
+            return { filter = nil }
+        }, observeGlobal: { _ in nil })
+        monitor.start()
+        defer { monitor.stop() }
+        let deliver = try #require(filter)
+        let press = try keyEvent(.flagsChanged, key: kVK_Function, flags: .function)
+        let release = try keyEvent(.flagsChanged, key: kVK_Function)
+        let edit = try keyEvent(.keyDown, key: kVK_ANSI_E)
+        let repeatedEdit = try keyEvent(.keyDown, key: kVK_ANSI_E, flags: .function, repeated: true)
+        let editUp = try keyEvent(.keyUp, key: kVK_ANSI_E)
+
+        #expect(!deliver(try keyEvent(.keyDown, key: kVK_ANSI_E)))
+        #expect(!deliver(press))
+        clock.advanceTo(initial.addingTimeInterval(0.2))
+        #expect(deliver(edit))
+        #expect(deliver(repeatedEdit))
+        #expect(actions == [.start])
+        #expect(shortcuts == [.edit])
+        #expect(!deliver(release))
+        #expect(deliver(editUp))
+        #expect(actions == [.start, .stop])
+        #expect(!deliver(try keyEvent(.keyDown, key: kVK_ANSI_E)))
+    }
+
+    @Test func cancelChordPreventsReleaseFromStoppingOrConfirmingTheDraft() throws {
+        _ = NSApplication.shared
+        let initial = Date(timeIntervalSince1970: 0)
+        let clock = HistoricalScheduler(initialClock: initial)
+        var actions: [FunctionKeyGesture.Action] = []
+        var shortcuts: [DictationKeyInput.RecordingShortcut] = []
+        let input = DictationKeyInput(scheduler: clock, canConfirm: { true }, recordingShortcut: {
+            shortcuts.append($0)
+            return true
+        }, action: { actions.append($0) })
+        input.changed(down: true, at: 0)
+        clock.advanceTo(initial.addingTimeInterval(0.2))
+        #expect(input.handle(.cancel))
+        #expect(!input.handle(.edit))
+        input.changed(down: false, at: 0.22)
+        #expect(actions == [.start])
+        #expect(shortcuts == [.cancel])
+
+        input.changed(down: true, at: 0.3)
+        clock.advanceTo(initial.addingTimeInterval(0.5))
+        input.changed(down: false, at: 0.51)
+        #expect(actions == [.start, .start, .stop])
+    }
+
     @Test func accessibilityEnablesGlobalFnAndRevocationEndsAnActiveHold() throws {
         _ = NSApplication.shared
         let initial = Date(timeIntervalSince1970: 0)
@@ -178,9 +239,9 @@ import Testing
     }
 
     private func keyEvent(_ type: NSEvent.EventType, key: Int, flags: NSEvent.ModifierFlags = [],
-                          at time: TimeInterval = 0) throws -> NSEvent {
+                          at time: TimeInterval = 0, repeated: Bool = false) throws -> NSEvent {
         try #require(NSEvent.keyEvent(with: type, location: .zero, modifierFlags: flags,
             timestamp: time, windowNumber: 0, context: nil, characters: "", charactersIgnoringModifiers: "",
-            isARepeat: false, keyCode: UInt16(key)))
+            isARepeat: repeated, keyCode: UInt16(key)))
     }
 }

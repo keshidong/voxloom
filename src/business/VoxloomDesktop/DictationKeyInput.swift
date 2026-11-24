@@ -5,17 +5,22 @@ import RxSwift
 
 /// Interprets modifier transitions independently of the event source.
 @MainActor final class DictationKeyInput {
+    enum RecordingShortcut: Equatable { case edit, cancel }
+
     let canConfirm: () -> Bool
     let action: (FunctionKeyGesture.Action) -> Void
+    private let recordingShortcut: (RecordingShortcut) -> Bool
     private let scheduler: any SchedulerType
     private var gesture = FunctionKeyGesture()
     private var threshold: (any Disposable)?
 
     init(scheduler: any SchedulerType = MainScheduler.instance, canConfirm: @escaping () -> Bool,
+         recordingShortcut: @escaping (RecordingShortcut) -> Bool = { _ in false },
          action: @escaping (FunctionKeyGesture.Action) -> Void) {
         self.scheduler = scheduler
         self.canConfirm = canConfirm
         self.action = action
+        self.recordingShortcut = recordingShortcut
     }
 
     func changed(down: Bool, at timestamp: TimeInterval) {
@@ -37,59 +42,129 @@ import RxSwift
         threshold = nil
         if let event = gesture.interrupt() { action(event) }
     }
+
+    func handle(_ shortcut: RecordingShortcut) -> Bool {
+        guard gesture.isHolding, recordingShortcut(shortcut) else { return false }
+        if shortcut == .cancel { _ = gesture.interrupt() }
+        return true
+    }
 }
 
-/// Observes Fn in the active app without changing the events it receives.
+/// Routes Fn transitions and filters recording shortcuts before delivery to the focused app.
 @MainActor final class DictationKeyMonitor {
-    typealias ObserveGlobal = @MainActor (@escaping (NSEvent) -> Void) -> (() -> Void)?
+    typealias RemoveMonitor = @MainActor () -> Void
+    typealias ObserveGlobal = @MainActor (@escaping (NSEvent) -> Void) -> RemoveMonitor?
+    typealias FilterGlobal = @MainActor (@escaping (NSEvent) -> Bool, @escaping () -> Void) -> RemoveMonitor?
     private static let otherModifiers: NSEvent.ModifierFlags = [.shift, .control, .command, .option]
     private static let keyboardEvents: NSEvent.EventTypeMask = [.flagsChanged, .keyDown]
     private let input: DictationKeyInput
     private let isTrusted: () -> Bool
     private let observeGlobal: ObserveGlobal
-    private var local: Any?
-    private var globalObserver: (id: UUID, remove: () -> Void)?
-    var isGlobal: Bool { globalObserver != nil }
+    private let filterGlobal: FilterGlobal
+    private var removeLocal: RemoveMonitor?
+    private var global: (id: UUID, filtersEvents: Bool, remove: RemoveMonitor)?
+    private var consumedKeys: Set<UInt16> = []
+    var isGlobal: Bool { global != nil }
 
     init(input: DictationKeyInput, isTrusted: @escaping () -> Bool,
+         filterGlobal: @escaping FilterGlobal = { _, _ in nil },
          observeGlobal: @escaping ObserveGlobal = DictationKeyMonitor.installGlobalObserver) {
         self.input = input
         self.isTrusted = isTrusted
         self.observeGlobal = observeGlobal
+        self.filterGlobal = filterGlobal
+    }
+
+    deinit {
+        let removeLocal = removeLocal
+        let removeGlobal = global?.remove
+        if removeLocal != nil || removeGlobal != nil {
+            Task { @MainActor in
+                removeLocal?()
+                removeGlobal?()
+            }
+        }
     }
 
     func start() {
-        if local == nil {
-            local = NSEvent.addLocalMonitorForEvents(matching: Self.keyboardEvents) { [weak self] event in
-                MainActor.assumeIsolated { self?.receive(event) }
-                return event
+        if removeLocal == nil {
+            let monitor = NSEvent.addLocalMonitorForEvents(matching: Self.keyboardEvents.union(.keyUp)) { [weak self] event in
+                let consumed = MainActor.assumeIsolated {
+                    guard let self, self.global?.filtersEvents != true else { return false }
+                    return self.filter(event)
+                }
+                return consumed ? nil : event
             }
+            if let monitor { removeLocal = { NSEvent.removeMonitor(monitor) } }
         }
         refresh()
     }
 
     func refresh() {
-        guard local != nil else { return }
+        guard removeLocal != nil else { return }
         guard isTrusted() else {
             removeGlobal()
             return
         }
-        guard !isGlobal else { return }
-        // AppKit sends global observers only events addressed to other apps.
+        guard global?.filtersEvents != true else { return }
         let id = UUID()
+        if let remove = filterGlobal({ [weak self] event in
+            guard let self, global?.id == id else { return false }
+            return filter(event)
+        }, { [weak self] in
+            guard let self, global?.id == id else { return }
+            consumedKeys.removeAll()
+            input.interrupt()
+        }) {
+            removeGlobal()
+            global = (id, true, remove)
+            return
+        }
+        guard global == nil else { return }
+        // AppKit sends global observers only events addressed to other apps.
         let remove = observeGlobal { [weak self] event in
             MainActor.assumeIsolated {
-                if let self, self.globalObserver?.id == id { self.receive(event) }
+                if let self, self.global?.id == id { self.receive(event) }
             }
         }
-        if let remove { globalObserver = (id, remove) }
+        if let remove { global = (id, false, remove) }
     }
 
     func stop() {
-        if let local { NSEvent.removeMonitor(local) }
-        local = nil
+        removeLocal?()
+        removeLocal = nil
         removeGlobal()
+        consumedKeys.removeAll()
         input.interrupt()
+    }
+
+    private func filter(_ event: NSEvent) -> Bool {
+        switch event.type {
+        case .keyUp:
+            return consumedKeys.remove(event.keyCode) != nil
+        case .keyDown:
+            if event.isARepeat {
+                if consumedKeys.contains(event.keyCode) { return true }
+            } else {
+                consumedKeys.remove(event.keyCode)
+                if event.modifierFlags.isDisjoint(with: Self.otherModifiers),
+                   let shortcut = recordingShortcut(for: event.keyCode), input.handle(shortcut) {
+                    consumedKeys.insert(event.keyCode)
+                    return true
+                }
+            }
+        default: break
+        }
+        receive(event)
+        return false
+    }
+
+    private func recordingShortcut(for keyCode: UInt16) -> DictationKeyInput.RecordingShortcut? {
+        switch Int(keyCode) {
+        case kVK_ANSI_E: .edit
+        case kVK_Escape: .cancel
+        default: nil
+        }
     }
 
     func receive(_ event: NSEvent) {
@@ -110,13 +185,14 @@ import RxSwift
     }
 
     private func removeGlobal() {
-        guard let globalObserver else { return }
-        self.globalObserver = nil
-        globalObserver.remove()
+        guard let global else { return }
+        self.global = nil
+        global.remove()
+        consumedKeys.removeAll()
         input.interrupt()
     }
 
-    private static func installGlobalObserver(_ handler: @escaping (NSEvent) -> Void) -> (() -> Void)? {
+    private static func installGlobalObserver(_ handler: @escaping (NSEvent) -> Void) -> RemoveMonitor? {
         guard let monitor = NSEvent.addGlobalMonitorForEvents(matching: keyboardEvents, handler: handler) else { return nil }
         return { NSEvent.removeMonitor(monitor) }
     }

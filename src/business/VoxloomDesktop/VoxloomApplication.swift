@@ -1,4 +1,5 @@
 import AppKit
+import RxSwift
 import SpeechInput
 import SpeechFoundation
 
@@ -24,8 +25,16 @@ import SpeechFoundation
     private let activate: () -> Void
     private let permissions: DictationPermissions
     private let makeMonitor: (DictationKeyInput) -> DictationKeyMonitor
+    private let keyScheduler: any SchedulerType
     private let replyToQuit: (Bool) -> Void
-    private lazy var input = DictationKeyInput(canConfirm: { [weak self] in self?.flow.canInsert == true },
+    private lazy var input = DictationKeyInput(scheduler: keyScheduler, canConfirm: { [weak self] in self?.flow.canInsert == true },
+        recordingShortcut: { [weak self] shortcut in
+            guard let self else { return false }
+            switch shortcut {
+            case .edit: return flow.requestRecordingEdit()
+            case .cancel: return flow.cancelHeldRecording()
+            }
+        },
         action: { [weak self] event in self?.receive(event) })
     private var monitor: DictationKeyMonitor?
     private var availability = DictationAvailability()
@@ -42,13 +51,16 @@ import SpeechFoundation
          insertion: CaretInsertion? = nil,
          activate: @escaping () -> Void = { NSApp.activate() },
          permissions: DictationPermissions = .init(),
+         keyScheduler: any SchedulerType = MainScheduler.instance,
          makeMonitor: ((DictationKeyInput) -> DictationKeyMonitor)? = nil,
          replyToQuit: @escaping (Bool) -> Void = { NSApp.reply(toApplicationShouldTerminate: $0) }) {
         self.defaults = defaults
         self.pasteboard = pasteboard
         self.activate = activate
         self.permissions = permissions
-        self.makeMonitor = makeMonitor ?? { DictationKeyMonitor(input: $0, isTrusted: permissions.isTrusted) }
+        self.keyScheduler = keyScheduler
+        self.makeMonitor = makeMonitor ?? { DictationKeyMonitor(input: $0, isTrusted: permissions.isTrusted,
+                                                                 filterGlobal: DictationEventTap.install) }
         self.replyToQuit = replyToQuit
         let selected = DictationSettings(defaults: defaults)
         let models = LocalModels(root: root)
@@ -138,6 +150,7 @@ import SpeechFoundation
         flow.onChange = { [weak self] in
             if let self { overlay.render(flow, availability: availability) }
         }
+        flow.onOpenDraft = { [weak overlay] in overlay?.showDraftEditor() }
         overlay.onEdit = { [weak flow] text, visible, range in flow?.edit(text, basedOn: visible, replacedRange: range) }
         settingsWindow.onChange = { [weak self] value in
             guard let self else { return }

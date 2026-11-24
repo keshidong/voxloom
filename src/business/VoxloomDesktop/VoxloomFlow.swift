@@ -13,6 +13,11 @@ import AppKit
         case manual(CaretInsertion.Destination)
         case automatic(CapturedTarget)
     }
+    private struct HeldRecording {
+        let target: CapturedTarget
+        let appendsToDraft: Bool
+        var opensEditor = false
+    }
     private struct RecognitionEngine: Equatable {
         let model: RecognitionModel
         let usesGPU: Bool
@@ -29,20 +34,22 @@ import AppKit
     private(set) var usesSample = false
     private(set) var didSendInsertion = false
     var onChange: (() -> Void)?
+    var onOpenDraft: (() -> Void)?
     #if DEBUG
     var debugContextLog: DebugContextLog?
     #endif
 
     var canStart: Bool {
-        !heldRecording && startup == nil && insertionRequest == nil && (state?.live.phase ?? .idle) == .idle
+        heldRecording == nil && startup == nil && insertionRequest == nil && (state?.live.phase ?? .idle) == .idle
     }
     var canTrySample: Bool { canStart && (didSendInsertion || state?.text.isEmpty != false) }
     var canInsert: Bool {
-        guard !heldRecording, startup == nil, let state, !didSendInsertion,
+        guard heldRecording == nil, startup == nil, let state, !didSendInsertion,
               !state.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
         return (state.phase == .editing || state.phase == .confirmed) &&
-            (state.live.phase == .idle || state.live.phase == .finishing)
+            (state.live.phase == .idle || (editedTarget == nil && state.live.phase == .finishing))
     }
+    var editsRecordingOnRelease: Bool { heldRecording?.opensEditor == true }
 
     private let capture: () -> any AudioCapturing
     private let makeRecognizer: (DictationSettings) -> any SpeechRecognizer
@@ -53,8 +60,8 @@ import AppKit
     private var observation: (any Disposable)?
     private var startup: Task<Void, Never>?
     private var activeEngine: (configuration: RecognitionEngine, recognizer: any SpeechRecognizer)?
-    private var heldRecording = false
-    private var recordingTarget: CapturedTarget?
+    private var heldRecording: HeldRecording?
+    private var editedTarget: CapturedTarget?
     private var insertionRequest: InsertionRequest?
 
     init(settings: DictationSettings, capture: @escaping () -> any AudioCapturing,
@@ -85,6 +92,19 @@ import AppKit
         begin(SampleCapture(audio: audio, realtime: false), held: false)
     }
 
+    func requestRecordingEdit() -> Bool {
+        guard heldRecording != nil else { return false }
+        heldRecording?.opensEditor = true
+        onChange?()
+        return true
+    }
+
+    func cancelHeldRecording() -> Bool {
+        guard heldRecording != nil else { return false }
+        clearOrCancel(notice: "本轮已取消，松开 Fn 后可重录")
+        return true
+    }
+
     func apply(_ settings: DictationSettings) {
         self.settings = settings
         onChange?()
@@ -95,20 +115,23 @@ import AppKit
         session?.edit(text, basedOn: visibleText, replacedRange: replacedRange)
     }
 
-    func clearOrCancel() {
+    func clearOrCancel(notice: String? = nil) {
         if case .automatic? = insertionRequest, state?.live.phase == .idle {
             insertionRequest = nil
-            notice = nil
+            self.notice = notice
             session?.cancelAutomaticInsertion()
             return
         }
         let cancelRecording = !canStart
-        recordingTarget = nil
         insertionRequest = nil
-        heldRecording = false
-        notice = nil
+        heldRecording = nil
+        self.notice = notice
         startup?.cancel()
-        if cancelRecording { session?.cancelRecording() } else { session?.cancel() }
+        if cancelRecording { session?.cancelRecording() }
+        else {
+            editedTarget = nil
+            session?.cancel()
+        }
         onChange?()
     }
 
@@ -118,7 +141,8 @@ import AppKit
     }
 
     func shutdown() async {
-        recordingTarget = nil
+        heldRecording = nil
+        editedTarget = nil
         insertionRequest = nil
         observation?.dispose()
         startup?.cancel()
@@ -153,13 +177,12 @@ import AppKit
         let next = DictationSession(live: LiveSpeechSession(capture: audio, ownsRecognizer: false), existingText: existingText,
                                     readContext: contextReader, recognitionPromptByteLimit: selected.model.promptByteLimit)
         notice = nil
-        heldRecording = held
         usesSample = !held
         didSendInsertion = false
         insertionRequest = nil
-        recordingTarget = held && existingText.isEmpty
-            ? Result { try insertion.destination(requireFocusedInput: true) }
-            : nil
+        if existingText.isEmpty { editedTarget = nil }
+        heldRecording = held ? HeldRecording(target: Result { try insertion.destination(requireFocusedInput: true) },
+                                             appendsToDraft: !existingText.isEmpty) : nil
         observation?.dispose()
         session = next
         observation = next.states.subscribe(onNext: { [weak self] _ in self?.refresh() })
@@ -197,11 +220,12 @@ import AppKit
     }
 
     private func stopRecording(automatic: Bool) {
-        guard heldRecording, let session else { return }
-        heldRecording = false
-        let target = recordingTarget
-        recordingTarget = nil
-        if automatic, startup == nil, let target {
+        guard let recording = heldRecording, let session else { return }
+        heldRecording = nil
+        let opensEditor = automatic && recording.opensEditor
+        if opensEditor { editedTarget = recording.target }
+        if automatic, !opensEditor, !recording.appendsToDraft, startup == nil {
+            let target = recording.target
             insertionRequest = .automatic(target)
             if case .success = target {
                 session.stopForAutomaticInsertion()
@@ -209,12 +233,21 @@ import AppKit
             }
         }
         startup?.cancel()
+        if opensEditor { onOpenDraft?() }
         session.stop()
     }
 
     private func insertDraft() {
         guard canInsert, let session else { return }
         do {
+            if let editedTarget {
+                insert(session.state.text, at: try editedTarget.get())
+                if didSendInsertion {
+                    self.editedTarget = nil
+                    session.confirm()
+                } else { onChange?() }
+                return
+            }
             insertionRequest = .manual(try insertion.destination())
             notice = nil
             if session.state.phase == .confirmed { refresh() }

@@ -76,6 +76,7 @@ import SpeechInput
     private let placeholder = NSTextField(labelWithString: "转写会出现在这里")
     private var presented = ""
     private var keyboardRange: NSRange?
+    private var openedByShortcut = false
 
     init() {
         super.init(window: panel)
@@ -223,16 +224,29 @@ import SpeechInput
     @objc private func toggleDraft() {
         let show = draftBody.isHidden
         if !show { finishKeyboardEdit() }
+        setDraftVisible(show)
+        if show, editor.isEditable { panel.makeFirstResponder(editor) }
+    }
+
+    func showDraftEditor() {
+        openedByShortcut = true
+        setDraftVisible(true)
+        panel.makeFirstResponder(editor)
+        panel.makeKeyAndOrderFront(nil)
+    }
+
+    private func setDraftVisible(_ show: Bool) {
+        if !show { openedByShortcut = false }
         draftBody.isHidden = !show
         draftToggle.title = show ? "收起" : "草稿"
         draftToggle.setAccessibilityLabel(show ? "收起草稿" : "草稿")
         layoutPanel()
-        if show, editor.isEditable {
-            panel.makeFirstResponder(editor)
-        } else if !show, panel.isKeyWindow {
+        if !show {
             panel.makeFirstResponder(nil)
-            panel.orderOut(nil)
-            panel.orderFrontRegardless()
+            if panel.isKeyWindow {
+                panel.orderOut(nil)
+                panel.orderFrontRegardless()
+            }
         }
     }
 
@@ -268,7 +282,8 @@ import SpeechInput
         let available = !text.isEmpty
         let previewText = flow.didSendInsertion ? "" : text.split(whereSeparator: \.isNewline).joined(separator: " ")
         if preview.stringValue != previewText { preview.stringValue = previewText }
-        layoutPanel()
+        if openedByShortcut, flow.didSendInsertion { setDraftVisible(false) }
+        else { layoutPanel() }
         if !editor.hasMarkedText(), presented != text {
             presented = text
             if editor.string != text {
@@ -280,10 +295,11 @@ import SpeechInput
         editor.isEditable = current?.phase == .editing
         placeholder.isHidden = available
         enableAccessibility.isHidden = availability.canInsert || phase != .idle
-        shortcut.stringValue = switch (availability.globalShortcut, availability.canInsert) {
-        case (true, true): "松开 Fn 自动插入"
-        case (true, false): "启用辅助功能后自动插入"
-        case (false, _): "仅在 Voxloom 内响应 Fn"
+        shortcut.stringValue = switch (openedByShortcut, availability.globalShortcut, availability.canInsert) {
+        case (true, _, _): "Enter 插入 · Shift+Enter 换行"
+        case (false, true, true): "松开 Fn 自动插入"
+        case (false, true, false): "启用辅助功能后自动插入"
+        case (false, false, _): "仅在 Voxloom 内响应 Fn"
         }
         model.stringValue = flow.settings.model.title
         let level = min(1, (current?.live.level ?? 0) * 5)
@@ -307,7 +323,8 @@ import SpeechInput
         let processing = phase == .finishing || (phase == .idle && current?.correction == .working)
         progress.isHidden = !processing
         if processing { progress.startAnimation(nil) } else { progress.stopAnimation(nil) }
-        status.stringValue = flow.notice ?? current?.live.error ?? correctionText ?? stateText
+        let editText = flow.editsRecordingOnRelease ? "松开 Fn 后编辑" : nil
+        status.stringValue = flow.notice ?? current?.live.error ?? editText ?? correctionText ?? stateText
         status.toolTip = status.stringValue
         status.textColor = phase == .recording ? .systemMint : .labelColor
         sample.isEnabled = flow.canTrySample

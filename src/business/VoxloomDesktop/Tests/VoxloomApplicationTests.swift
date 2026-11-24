@@ -7,6 +7,80 @@ import Testing
 @testable import VoxloomDesktop
 
 @MainActor @Suite(.serialized) struct VoxloomApplicationTests {
+    enum EditShortcutOutcome: CaseIterable { case finishEditing, cancel }
+
+    @Test(arguments: EditShortcutOutcome.allCases)
+    func anEditRequestCanBeCompletedOrCancelledFromTheKeyboard(outcome: EditShortcutOutcome) async throws {
+        _ = NSApplication.shared
+        let domain = UUID().uuidString
+        let defaults = try #require(UserDefaults(suiteName: domain))
+        defer { defaults.removePersistentDomain(forName: domain) }
+        let board = NSPasteboard.withUniqueName()
+        defer { board.releaseGlobally() }
+        let capture = FlowCapture()
+        let clock = HistoricalScheduler(initialClock: Date(timeIntervalSince1970: 0))
+        var tapped: ((NSEvent) -> Bool)?
+        var pasted: [String] = []
+        let app = VoxloomCoordinator(root: FileManager.default.temporaryDirectory, defaults: defaults, pasteboard: board,
+            recognizer: { _ in SampleRecognizer(text: "口述文字") }, capture: { capture },
+            insertion: .init(foregroundTarget: { 101 }, canPost: { true },
+                paste: { text, _ in pasted.append(text); return true }, captureFocus: { _ in { true } }),
+            activate: {}, permissions: .init(isTrusted: { true }, canPostEvents: { true }), keyScheduler: clock,
+            makeMonitor: { input in
+                DictationKeyMonitor(input: input, isTrusted: { true }, filterGlobal: { handler, _ in
+                    tapped = handler
+                    return { tapped = nil }
+                })
+            })
+        app.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
+        defer { app.overlay.panel.orderOut(nil) }
+        let deliver = try #require(tapped)
+        func event(_ type: NSEvent.EventType, key: Int, flags: NSEvent.ModifierFlags = [],
+                   characters: String = "") throws -> NSEvent {
+            try #require(NSEvent.keyEvent(with: type, location: .zero, modifierFlags: flags,
+                timestamp: 0, windowNumber: app.overlay.panel.windowNumber, context: nil, characters: characters,
+                charactersIgnoringModifiers: characters, isARepeat: false, keyCode: UInt16(key)))
+        }
+
+        #expect(!deliver(try event(.flagsChanged, key: kVK_Function, flags: .function)))
+        clock.advanceTo(clock.clock.addingTimeInterval(0.2))
+        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while capture.receive == nil && ContinuousClock.now < deadline { await Task.yield() }
+        try #require(capture.receive != nil)
+        #expect(deliver(try event(.keyDown, key: kVK_ANSI_E, flags: .function)))
+        #expect(app.overlay.status.stringValue == "松开 Fn 后编辑")
+        #expect(app.overlay.editor.isHiddenOrHasHiddenAncestor)
+        capture.receive?([3000, -3000])
+        while app.flow.state?.live.samples.count != 2 && ContinuousClock.now < deadline { await Task.yield() }
+        try #require(app.flow.state?.live.samples.count == 2)
+        if outcome == .cancel {
+            #expect(deliver(try event(.keyDown, key: kVK_Escape, flags: .function)))
+            #expect(deliver(try event(.keyUp, key: kVK_Escape, flags: .function)))
+        }
+        #expect(!deliver(try event(.flagsChanged, key: kVK_Function)))
+        #expect(deliver(try event(.keyUp, key: kVK_ANSI_E)))
+        while !app.flow.canStart && ContinuousClock.now < deadline { await Task.yield() }
+        try #require(app.flow.canStart)
+        #expect(pasted.isEmpty)
+        if outcome == .cancel {
+            #expect(app.overlay.editor.isHiddenOrHasHiddenAncestor)
+            #expect(app.overlay.editor.string.isEmpty)
+            #expect(app.overlay.status.stringValue == "本轮已取消，松开 Fn 后可重录")
+            await app.stop()
+            return
+        }
+        #expect(!app.overlay.editor.isHiddenOrHasHiddenAncestor)
+        #expect(app.overlay.panel.firstResponder === app.overlay.editor)
+        #expect(app.overlay.editor.string == "口述文字")
+
+        let editor = app.overlay.editor
+        editor.insertText("已修改", replacementRange: NSRange(location: 0, length: editor.string.utf16.count))
+        editor.keyDown(with: try event(.keyDown, key: kVK_Return, characters: "\r"))
+        #expect(pasted == ["已修改"])
+        #expect(editor.isHiddenOrHasHiddenAncestor)
+        await app.stop()
+    }
+
     @Test(arguments: [1, 200])
     func releasingFnInsertsTheTranscriptionThroughTheDesktopCoordinator(repetitions: Int) async throws {
         _ = NSApplication.shared
