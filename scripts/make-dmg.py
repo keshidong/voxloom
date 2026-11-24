@@ -11,6 +11,24 @@ import tempfile
 ROOT = Path(__file__).resolve().parent.parent
 
 
+def build_installer_image(image, app, volume_name):
+    from dmgbuild import build_dmg
+
+    build_dmg(str(image), volume_name, settings={
+        "filesystem": "HFS+",
+        "format": "ULFO",
+        "files": [str(app)],
+        "symlinks": {"Applications": "/Applications"},
+        "icon": str(app / "Contents/Resources/AppIcon.icns"),
+        "background": str(ROOT / "scripts/dmg/install-background.tiff"),
+        "default_view": "icon-view",
+        "window_rect": ((150, 150), (640, 340)),
+        "icon_size": 104,
+        "text_size": 14,
+        "icon_locations": {app.name: (160, 187), "Applications": (480, 187)},
+    })
+
+
 def package_disk_image(configuration, output, voice_isolation, version=None, build_number=None):
     app_name = "Voxloom Debug" if configuration == "debug" else "Voxloom"
     build = ROOT / ".build"
@@ -19,10 +37,10 @@ def package_disk_image(configuration, output, voice_isolation, version=None, bui
 
     with tempfile.TemporaryDirectory(dir=build, prefix="dmg-source-") as source_directory, \
             tempfile.TemporaryDirectory(dir=output.parent, prefix="dmg-output-") as image_directory:
-        source = Path(source_directory)
+        app = Path(source_directory) / f"{app_name}.app"
         command = [
             sys.executable, "scripts/package-app.py",
-            "--configuration", configuration, "--output", str(source / f"{app_name}.app"),
+            "--configuration", configuration, "--output", str(app),
             "--external-models",
         ]
         if voice_isolation:
@@ -32,15 +50,8 @@ def package_disk_image(configuration, output, voice_isolation, version=None, bui
         if build_number is not None:
             command.extend(["--build-number", build_number])
         subprocess.run(command, cwd=ROOT, check=True)
-        (source / "Applications").symlink_to("/Applications", target_is_directory=True)
-        # hdiutil inherits the source directory's permissions for the mounted volume.
-        source.chmod(0o755)
-
         image = Path(image_directory) / output.name
-        subprocess.run([
-            "hdiutil", "create", "-srcfolder", str(source), "-volname", app_name,
-            "-fs", "HFS+", "-format", "ULFO", "-quiet", str(image),
-        ], check=True)
+        build_installer_image(image, app, app_name)
         subprocess.run(["hdiutil", "verify", "-quiet", str(image)], check=True)
         image.replace(output)
 
