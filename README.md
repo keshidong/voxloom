@@ -94,7 +94,7 @@ PR 合并到 `main` 后，GitHub Actions 自动递增补丁版本号，例如 `v
 
 也可以在 **Actions → Package Voxloom DMG → Run workflow** 手动打 Release 或 Debug 包。手动打包的产物在 **Artifacts** 最多保留 90 天。
 
-打开 DMG 后，按窗口内箭头把 App 拖入「应用程序」。ASR 模型通过 SHA-256 校验后即可听写。开启纠错或人声分离时下载对应的可选模型。设置可查看各模型的下载状态并重试。模型存储在 `~/Library/Application Support/dev.voxloom.app/Models`，后续升级可复用相同版本的模型。
+打开 DMG 后，在「Voxloom Installer」窗口里按箭头把 App 拖入「应用程序」。ASR 模型通过 SHA-256 校验后即可听写。开启纠错或人声分离时下载对应的可选模型。设置可查看各模型的下载状态并重试。模型存储在 `~/Library/Application Support/dev.voxloom.app/Models`，后续升级可复用相同版本的模型。
 
 Release 的 Bundle ID 固定为 `dev.voxloom.app`，Debug 固定为 `dev.voxloom.app.debug`。App 使用 ad-hoc 签名，未经 Apple 公证。
 
