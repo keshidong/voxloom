@@ -11,6 +11,6 @@
 | llama.cpp | v1.0.0 | [源码](https://github.com/ggml-org/llama.cpp) |
 | Whisper / RxSwift | v1.8.2 / 6.10.2 | [Whisper](https://github.com/ggml-org/whisper.cpp)，[RxSwift](https://github.com/ReactiveX/RxSwift) |
 
-ASR 权重为 1,603,081,617 字节，LLM 权重为 2,497,281,120 字节。模型、配置文件的下载地址、磁盘大小和 SHA256 记录在 [模型下载清单](../scripts/model-downloads.json)。
+ASR 权重为 1,603,081,617 字节，LLM 权重为 2,497,281,120 字节。模型、配置文件的下载地址、磁盘大小和 SHA-256 记录在清单里。每个文件的 `url` 是主地址，`fallbackURLs` 是可选的有序备用地址。旧清单省略该字段时只使用主地址。所有来源共用同一个 `sha256`，安装目录也按内容校验值确定，增加来源后仍可使用现有缓存。[模型下载清单](../scripts/model-downloads.json)
 
 当前没有训练新的联合模型。未来可收集经用户同意保存的音频/人工文本对，先对 ASR 做领域评测与微调。Whisper 编码器接适配层与 Qwen 解码器在架构上可行，[Qwen2-Audio 报告](https://arxiv.org/html/2407.10759v1)有相近先例；这与当前串联两个离线模型是不同开发范围。

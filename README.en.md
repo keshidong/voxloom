@@ -10,6 +10,8 @@ After preparing the runtimes, run `python3 scripts/package-app.py --external-mod
 
 Pass `--configuration` (`-c`) with `debug` or `release` when packaging. Release is the default. The debug build has its own app name and bundle ID.
 
+Model downloads start at Hugging Face. If a connection resets, a server fails, or a file fails verification, Voxloom tries the configured ModelScope and HF-Mirror alternatives. During that installation, it prioritizes the source that most recently delivered a verified file. Every newly downloaded file must match the catalog's SHA-256 before installation. [Model download catalog](scripts/model-downloads.json)
+
 Builds with the optional voice isolation model include the experimental “Keep only my voice” setting, which is off by default. Record at least one 3–8 second clip. You can read the same Chinese-English sentence shown in settings for each speaking volume. Quiet, normal, and loud samples can be recorded, played back, replaced, or deleted separately. With isolation enabled, Voxloom filters new audio locally and updates the transcript preview while you hold Fn. Releasing Fn runs full-recording isolation and transcription for the final text.
 
 - Place the cursor in the target field and hold Fn (Globe) on its own for about 0.18 seconds to start recording. On release, Voxloom transcribes the remaining audio. If correction is enabled, Voxloom waits up to three more seconds and uses the available draft at the deadline. It requests a paste when it verifies that the original field is still focused. It keeps the draft if the target cannot be verified, focus changes, recording is interrupted, or permissions are missing. A recording can last up to 60 seconds.
