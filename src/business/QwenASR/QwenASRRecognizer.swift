@@ -98,8 +98,20 @@ public actor QwenASRRecognizer: SpeechRecognizer {
         let frameSize = AudioClip.sampleRate / 50  // 20 ms
         let minimumRMS = 32_768.0 * 0.001  // −60 dBFS, below the live recording threshold
         let minimumPower = minimumRMS * minimumRMS
+        let framesPerWindow = 10  // Compare the energy of 200 ms windows.
+        let frameCount = samples.count / frameSize
+        let checkBackground = frameCount >= 5 * framesPerWindow
+        let maximumBackgroundRMS = 32_768.0 * 0.025
+        let maximumBackgroundPower = maximumBackgroundRMS * maximumBackgroundRMS
+        let maximumBackgroundContrast = 2.25  // 1.5× in RMS
         var activeFrames = 0
-        for start in stride(from: 0, through: samples.count - frameSize, by: frameSize) {
+        var hasSustainedAudio = false
+        var windowPower = 0.0
+        var windowFrames = 0
+        var lowestPower = Double.infinity
+        var highestPower = 0.0
+        for frame in 0..<frameCount {
+            let start = frame * frameSize
             var sum = 0.0
             var sumOfSquares = 0.0
             for sample in samples[start..<(start + frameSize)] {
@@ -111,7 +123,23 @@ public actor QwenASRRecognizer: SpeechRecognizer {
             let mean = sum / Double(frameSize)
             let power = sumOfSquares / Double(frameSize) - mean * mean
             activeFrames = power >= minimumPower ? activeFrames + 1 : 0
-            if activeFrames == 3 { return true }
+            hasSustainedAudio = hasSustainedAudio || activeFrames >= 3
+            if hasSustainedAudio && !checkBackground { return true }
+
+            windowPower += power
+            windowFrames += 1
+            if windowFrames == framesPerWindow || frame == frameCount - 1 {
+                let averagePower = windowPower / Double(windowFrames)
+                lowestPower = min(lowestPower, averagePower)
+                highestPower = max(highestPower, averagePower)
+                windowPower = 0
+                windowFrames = 0
+            }
+            // Quiet audio with a steady envelope can be a fan or mains hum.
+            if hasSustainedAudio,
+               highestPower > maximumBackgroundPower || highestPower > lowestPower * maximumBackgroundContrast {
+                return true
+            }
         }
         return false
     }
