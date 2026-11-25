@@ -14,18 +14,27 @@ private let englishAudio = bundleResources?.appendingPathComponent("english.wav"
 private let corpusPath = ProcessInfo.processInfo.environment["VOXLOOM_CORRECTION_CORPUS"]
 private let noiseFixtures = ProcessInfo.processInfo.environment["VOXLOOM_QWEN_NOISE_FIXTURES"]
 private let shortAcknowledgement = ProcessInfo.processInfo.environment["VOXLOOM_QWEN_SHORT_ACK_WAV"]
+private let voiceActivity = QwenVoiceActivityConfiguration(
+    executable: bundleResources?.appendingPathComponent("vad-speech-segments")
+        ?? root.appendingPathComponent(".runtime/whisper-build/bin/vad-speech-segments"),
+    model: bundleResources?.appendingPathComponent("ggml-silero-v5.1.2.bin")
+        ?? root.appendingPathComponent("models/ggml-silero-v5.1.2.bin"))
+private let hasVoiceActivity = FileManager.default.isExecutableFile(atPath: voiceActivity.executable.path)
+    && FileManager.default.isReadableFile(atPath: voiceActivity.model.path)
 
 @Suite(.serialized) struct QwenASRE2ETests {
     @Test(.enabled(if: noiseFixtures != nil, "Run scripts/prepare-qwen-noise-fixtures.py first"),
           arguments: ["public-noise-48dBFS", "public-noise-38dBFS"])
     func realBackgroundNoiseDoesNotRegainFalseTranscripts(level: String) async throws {
+        try #require(hasVoiceActivity)
         let fixtures = URL(fileURLWithPath: try #require(noiseFixtures)).appendingPathComponent(level)
         let files = try FileManager.default.contentsOfDirectory(at: fixtures, includingPropertiesForKeys: nil)
             .filter { $0.pathExtension == "wav" }
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
         try #require(files.count == 31)
         try #require(files.filter { $0.lastPathComponent.hasPrefix("AirConditioner_") }.count == 10)
-        let recognizer = QwenASRRecognizer(configuration: .init(executable: asrExecutable, model: asrModel))
+        let recognizer = QwenASRRecognizer(configuration: .init(executable: asrExecutable, model: asrModel,
+                                                               voiceActivity: voiceActivity))
         var falseTranscripts = 0
         var airConditionerFalseTranscripts = 0
         do {
@@ -42,17 +51,19 @@ private let shortAcknowledgement = ProcessInfo.processInfo.environment["VOXLOOM_
             throw error
         }
         await recognizer.shutdown()
-        #expect(falseTranscripts <= 22)
-        #expect(airConditionerFalseTranscripts <= 1)
+        #expect(falseTranscripts == 0)
+        #expect(airConditionerFalseTranscripts == 0)
         print("\(level): false transcripts \(falseTranscripts)/31, air conditioners \(airConditionerFalseTranscripts)/10")
     }
 
     @Test(.enabled(if: shortAcknowledgement != nil, "Set VOXLOOM_QWEN_SHORT_ACK_WAV to the short Mandarin fixture"))
     func realQwenKeepsASpokenShortAcknowledgement() async throws {
+        try #require(hasVoiceActivity)
         let fixture = URL(fileURLWithPath: try #require(shortAcknowledgement))
         let audio = try WAVCodec.decode(Data(contentsOf: fixture))
         try #require(audio.duration < 1)
-        let recognizer = QwenASRRecognizer(configuration: .init(executable: asrExecutable, model: asrModel))
+        let recognizer = QwenASRRecognizer(configuration: .init(executable: asrExecutable, model: asrModel,
+                                                               voiceActivity: voiceActivity))
         do {
             let result = try await recognizer.transcribe(audio, options: .init(language: .chinese))
             #expect(result.text.trimmingCharacters(in: .punctuationCharacters.union(.whitespacesAndNewlines)) == "嗯")
@@ -105,7 +116,7 @@ private let shortAcknowledgement = ProcessInfo.processInfo.environment["VOXLOOM_
     @Test(.enabled(if: FileManager.default.fileExists(atPath: asrModel.appendingPathComponent("model.safetensors").path)))
     func realResidentModelTranscribesChineseEnglishAndSilenceViaPublicInterface() async throws {
         let recognizer: any SpeechRecognizer = QwenASRRecognizer(configuration: .init(
-            executable: asrExecutable, model: asrModel))
+            executable: asrExecutable, model: asrModel, voiceActivity: hasVoiceActivity ? voiceActivity : nil))
         do {
             let chinese = try WAVCodec.decode(Data(contentsOf: chineseAudio))
             let result = try await recognizer.transcribe(chinese, options: .init(language: .chinese, context: "交易 停滞"))

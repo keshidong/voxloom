@@ -12,6 +12,15 @@ SCRIPT = Path(__file__).resolve().with_name("package-app.py")
 
 
 class AppBundlePackagingTest(unittest.TestCase):
+    def test_voxloom_packages_the_voice_activity_tool_without_the_external_weights(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.package(root, mlx_minimum="14.0")
+
+            resources = root / "Staged.app/Contents/Resources"
+            self.assertTrue((resources / "vad-speech-segments").is_file())
+            self.assertFalse((resources / "ggml-silero-v5.1.2.bin").exists())
+
     def test_voxloom_display_name_follows_the_bundle_language(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -64,6 +73,7 @@ class AppBundlePackagingTest(unittest.TestCase):
         for resource in (
             ".build/release/voxloom",
             ".runtime/whisper-build/bin/whisper-cli",
+            ".runtime/whisper-build/bin/vad-speech-segments",
             ".runtime/asr_zh.wav",
             ".runtime/whisper.cpp-1.8.2/samples/jfk.wav",
             ".runtime/RxSwift-6.10.2/LICENSE.md",

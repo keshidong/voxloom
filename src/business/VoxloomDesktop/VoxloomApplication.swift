@@ -209,6 +209,7 @@ import SpeechFoundation
             if previous.trigger != value.trigger { monitor?.setTrigger(value.trigger) }
             flow.apply(value)
             if previous.model != value.model { modelPreparation?.cancel(previous.model.rawValue) }
+            if value.model != .qwen { modelPreparation?.cancel(LocalModels.qwenVoiceActivityGroup) }
             if previous.correctsText && !value.correctsText { modelPreparation?.cancel("correction") }
             if !value.usesVoiceIsolation { modelPreparation?.cancel("voiceIsolation") }
             prepareSelectedModels()
@@ -219,6 +220,7 @@ import SpeechFoundation
         settingsWindow.onTriggerCapture = { [weak self] capturing in self?.monitor?.setSelectingTrigger(capturing) }
         settingsWindow.onRetryModel = { [weak self] model in
             if model == "correction" { self?.prepareCorrectionModelDownload(retry: true) }
+            else if model == LocalModels.qwenVoiceActivityGroup { self?.prepareQwenVoiceActivityDownload(retry: true) }
             else { self?.modelPreparation?.prepare(model, retry: true) }
         }
         modelPreparation?.onChange = { [weak self] model in self?.modelDownloadChanged(model) }
@@ -246,9 +248,18 @@ import SpeechFoundation
         guard let modelPreparation else { return }
         let settings = flow.settings
         modelPreparation.prepare(settings.model.rawValue)
+        prepareQwenVoiceActivityDownload()
         prepareCorrectionModelDownload()
         if settings.usesVoiceIsolation, voiceIsolator != nil { modelPreparation.prepare("voiceIsolation") }
         settingsWindow.updateModelDownloads(modelPreparation, settings: settings)
+    }
+
+    private func prepareQwenVoiceActivityDownload(retry: Bool = false) {
+        let group = LocalModels.qwenVoiceActivityGroup
+        guard flow.settings.model == .qwen, let modelPreparation,
+              modelPreparation.status(for: RecognitionModel.qwen.rawValue) == .ready,
+              modelPreparation.statusIfAvailable(for: group) != nil else { return }
+        modelPreparation.prepare(group, retry: retry)
     }
 
     private func prepareCorrectionModelDownload(retry: Bool = false) {
@@ -269,6 +280,7 @@ import SpeechFoundation
         if model == settings.model.rawValue {
             flow.showNotice("转写模型已就绪")
             flow.prepareForFirstRecording()
+            prepareQwenVoiceActivityDownload()
             prepareCorrectionModelDownload()
         }
         if model == "voiceIsolation" { prepareVoiceIsolationIfEnabled() }

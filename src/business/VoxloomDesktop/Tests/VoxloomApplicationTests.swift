@@ -62,6 +62,46 @@ import Testing
 
     private enum AccessibilityChoice { case enable, later }
 
+    @Test func qwenVoiceActivityDownloadsSeparatelyFromTheInstalledRecognizer() async throws {
+        _ = NSApplication.shared
+        let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let manifest = """
+        {"qwen":[{"path":"weights","url":"https://example.com/qwen",
+        "sha256":"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df","bytes":2}],
+        "qwenVoiceActivity":[{"path":"ggml-silero-v5.1.2.bin","url":"https://example.com/vad",
+        "sha256":"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df","bytes":2}]}
+        """
+        try Data(manifest.utf8).write(to: directory.appending(path: "model-downloads.json"))
+        let cache = directory.appending(path: "models")
+        let downloads = try #require(LocalModels(root: directory, downloadDirectory: cache).downloads)
+        let installedQwen = downloads.directory(for: "qwen")
+        try FileManager.default.createDirectory(at: installedQwen, withIntermediateDirectories: true)
+        try Data("ok".utf8).write(to: installedQwen.appending(path: "weights"))
+
+        let domain = UUID().uuidString
+        let defaults = try #require(UserDefaults(suiteName: domain))
+        defer { defaults.removePersistentDomain(forName: domain) }
+        let app = VoxloomCoordinator(root: directory, defaults: defaults, activate: {},
+            permissions: .init(isTrusted: { false }, microphoneAuthorization: { .authorized }),
+            downloadDirectory: cache, downloadModel: { url, progress in
+                #expect(url.lastPathComponent == "vad")
+                #expect(downloads.isInstalled("qwen"))
+                progress(1, 2)
+                let file = directory.appending(path: "received")
+                try Data("ok".utf8).write(to: file)
+                return file
+            })
+        app.connectViews()
+        defer { app.overlay.panel.orderOut(nil) }
+        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while !downloads.isInstalled("qwenVoiceActivity") && ContinuousClock.now < deadline { await Task.yield() }
+        #expect(downloads.isInstalled("qwenVoiceActivity"))
+        #expect(downloads.isInstalled("qwen"))
+        await app.stop()
+    }
+
     @Test func firstLaunchGuidesAccessibilityBeforeMicrophoneAndDownloadProgress() async throws {
         try await verifyFirstLaunch(.enable)
     }

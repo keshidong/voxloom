@@ -32,6 +32,11 @@ enum ModelDownloadStatus: Equatable {
         return .missing
     }
 
+    func statusIfAvailable(for model: String) -> ModelDownloadStatus? {
+        guard downloads.assets[model]?.isEmpty == false else { return nil }
+        return status(for: model)
+    }
+
     @discardableResult
     func prepare(_ model: String, retry: Bool = false) -> Task<Void, Never>? {
         guard transfers[model] == nil, !downloads.isInstalled(model), retry || errors[model] == nil else { return nil }

@@ -26,6 +26,76 @@ private final class ASRBoundary: JSONWorkerRunning, @unchecked Sendable {
 }
 
 struct QwenASRRecognizerTests {
+    @Test func shuttingDownCancelsVoiceActivityBeforeItCanStartRecognition() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let worker = ASRBoundary()
+        let provider = try recognizerWithDetector(in: root, script: """
+        #!/bin/sh
+        touch "$0.started"
+        exec /bin/sleep 30
+        """, worker: worker)
+
+        let transcription = Task {
+            try await provider.transcribe(AudioClip(samples: audibleTestSamples),
+                options: .init(language: .chinese, context: "图书卡 预付费 USD"))
+        }
+        defer { transcription.cancel() }
+        let marker = root.appendingPathComponent("vad.started")
+        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while !FileManager.default.fileExists(atPath: marker.path) {
+            try #require(ContinuousClock.now < deadline)
+            await Task.yield()
+        }
+
+        await provider.shutdown()
+        await #expect(throws: CancellationError.self) { try await transcription.value }
+        #expect(worker.calls == 0)
+        #expect(try !FileManager.default.contentsOfDirectory(atPath: root.path).contains { $0.hasPrefix("qwen-asr-") })
+    }
+
+    @Test(arguments: [
+        "printf '%s\\n' 'Detected 1 speech segments:'",
+        "printf '%s\\n' 'unexpected output'",
+        "printf '%s\\n' 'Detected 0 speech segments:'; exit 2"
+    ])
+    func voiceActivityLeavesTheOriginalAudioIntactForRecognition(output: String) async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let worker = ASRBoundary()
+        let provider = try recognizerWithDetector(in: root, script: """
+        #!/bin/sh
+        /bin/cp "$4" "$0.wav"
+        \(output)
+        """, worker: worker)
+
+        let result = try await provider.transcribe(AudioClip(samples: audibleTestSamples),
+            options: .init(language: .chinese, context: "图书卡 预付费 USD"))
+        #expect(result.text == "图书卡额度采用预付费模式")
+        #expect(worker.calls == 1)
+        let normalized = try WAVCodec.decode(Data(contentsOf: root.appendingPathComponent("vad.wav")))
+        #expect(normalized.samples.count == audibleTestSamples.count)
+        let power = normalized.samples.reduce(0.0) { sum, sample in
+            let level = Double(sample) / 32768
+            return sum + level * level
+        }
+        let rms = sqrt(power / Double(normalized.samples.count))
+        #expect(abs(rms - 0.03) < 0.00002)
+        await provider.shutdown()
+    }
+
+    private func recognizerWithDetector(in root: URL, script: String, worker: ASRBoundary) throws -> QwenASRRecognizer {
+        let model = root.appendingPathComponent("model.safetensors")
+        try Data().write(to: model)
+        let detector = root.appendingPathComponent("vad")
+        try Data(script.utf8).write(to: detector)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: detector.path)
+        return QwenASRRecognizer(configuration: .init(executable: URL(fileURLWithPath: "/usr/bin/true"), model: root,
+            voiceActivity: .init(executable: detector, model: model)), temporaryDirectory: root, factory: { worker })
+    }
+
     @Test func backgroundPreparationReusesTheWorkerWithoutSubmittingAudio() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

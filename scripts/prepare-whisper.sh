@@ -41,7 +41,7 @@ if [ ! -d "$whisper_source" ]; then
 fi
 "$cmake_bin" -S "$whisper_source" -B "$runtime_dir/whisper-build" \
     -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DGGML_METAL=ON -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0
-"$cmake_bin" --build "$runtime_dir/whisper-build" --config Release --target whisper-cli -j 4
+"$cmake_bin" --build "$runtime_dir/whisper-build" --config Release --target whisper-cli vad-speech-segments -j 4
 if [ "$model_name" = --runtime-only ]; then
     exit 0
 fi
