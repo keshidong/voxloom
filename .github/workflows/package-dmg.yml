@@ -104,6 +104,19 @@ jobs:
           "$dmg_python" scripts/make-dmg.py --configuration "$CONFIGURATION" --voice-isolation \
             --output "$RUNNER_TEMP/Voxloom-${CONFIGURATION}-arm64.dmg" "${version_args[@]}"
 
+      - name: Check the app inside the installer
+        run: |
+          dmg="$RUNNER_TEMP/Voxloom-${CONFIGURATION}-arm64.dmg"
+          mount_point=$(mktemp -d "$RUNNER_TEMP/voxloom-installer.XXXXXX")
+          hdiutil attach -quiet -readonly -nobrowse -noautoopen -mountpoint "$mount_point" "$dmg"
+          trap 'hdiutil detach -quiet "$mount_point" && rmdir "$mount_point"' EXIT
+          app="$mount_point/Voxloom.app"
+          if [ "$CONFIGURATION" = debug ]; then
+            app="$mount_point/Voxloom Debug.app"
+          fi
+          codesign --verify --strict "$app"
+          python3 scripts/package-app.py --check-qwen-runtime "$app"
+
       - name: Upload DMG
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

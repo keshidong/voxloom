@@ -11,10 +11,11 @@ import subprocess
 
 ROOT = Path(__file__).resolve().parent.parent
 RUNTIME = ROOT / ".runtime"
+MACOS_DEPLOYMENT_TARGET = "14.0"
 
 
-def run(*args):
-    subprocess.run(list(map(str, args)), cwd=ROOT, check=True)
+def run(*args, env=None):
+    subprocess.run(list(map(str, args)), cwd=ROOT, check=True, env=env)
 
 
 def sha(path):
@@ -37,6 +38,21 @@ def download(url, destination, checksum):
     partial.replace(destination)
 
 
+def prepare_python_packages(uv, python, site):
+    requirements = ROOT / "scripts/qwen-asr-requirements.txt"
+    installed = {d.metadata["Name"].lower().replace("_", "-"): d.version for d in distributions(path=[str(site)])}
+    wanted = [line.strip().split("==") for line in requirements.read_text().splitlines() if line.strip()]
+    target_file = site / ".voxloom-macos-target"
+    if (target_file.is_file() and target_file.read_text().strip() == MACOS_DEPLOYMENT_TARGET
+            and all(installed.get(name.lower().replace("_", "-")) == version for name, version in wanted)):
+        return
+    target_file.unlink(missing_ok=True)
+    run(uv, "pip", "install", "--python", python, "--python-platform", "aarch64-apple-darwin",
+        "--only-binary", ":all:", "--reinstall", "--target", site, "-r", requirements,
+        env=dict(os.environ, MACOSX_DEPLOYMENT_TARGET=MACOS_DEPLOYMENT_TARGET))
+    target_file.write_text(MACOS_DEPLOYMENT_TARGET + "\n")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--runtime-only", action="store_true", help="Skip model weights")
@@ -54,10 +70,7 @@ def main():
     if not python.exists():
         run(uv, "python", "install", "3.12.16", "--install-dir", RUNTIME / "python-installs", "--no-bin")
     site = RUNTIME / "asr-site"
-    installed = {d.metadata["Name"].lower().replace("_", "-"): d.version for d in distributions(path=[str(site)])}
-    wanted = [line.strip().split("==") for line in (ROOT / "scripts/qwen-asr-requirements.txt").read_text().splitlines() if line.strip()]
-    if any(installed.get(name.lower().replace("_", "-")) != version for name, version in wanted):
-        run(uv, "pip", "install", "--python", python, "--target", site, "-r", ROOT / "scripts/qwen-asr-requirements.txt")
+    prepare_python_packages(uv, python, site)
 
     if not arguments.runtime_only:
         assets = json.loads((ROOT / "scripts/model-downloads.json").read_text())
