@@ -29,6 +29,8 @@ Local checks cover expanding and collapsing the draft, recording and transcripti
 
 Local builds use ad-hoc signing. If the floating bar asks for Accessibility access after a rebuild, re-add the current `Voxloom.app` in System Settings. If macOS asks you to reopen the app, follow that prompt.
 
+If Voxloom 0.1.4 shows `engineUnavailable` on macOS earlier than 26.2, select Whisper Turbo in the transcription model settings and wait for its download to finish. New builds select the Qwen MLX runtime for macOS 14 and verify its minimum system version when packaging.
+
 ## Runtime resource usage
 
 Measurements were taken on 2026-11-23 at roughly 0.29-second intervals on an Apple M2 Pro with 32 GiB of unified memory and macOS 26.5.1. The desktop app was sampled while idle with Qwen ASR already loaded. Inference used the bundled Qwen3-ASR-1.7B 4-bit and Qwen3-4B-Instruct-2507 Q4_K_M models and a 4.2-second Mandarin clip. One case supplied manual vocabulary and correction reference text. The other omitted both. [Dual-model test](src/business/QwenASR/Tests/QwenASRE2ETests.swift)

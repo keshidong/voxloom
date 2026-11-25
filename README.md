@@ -28,6 +28,8 @@
 
 本地开发包使用临时签名。重新打包后，如果「辅助功能」里 Voxloom 已开启，语音条却仍显示「启用辅助功能」，请在该列表中重新添加当前的 `Voxloom.app`。若 macOS 提示重新打开 App，按提示操作。
 
+如果 Voxloom 0.1.4 在低于 macOS 26.2 的系统上显示 `engineUnavailable`，可先在「设置 → 转写模型」选择 Whisper Turbo，等模型下载完成后再录音。新构建会为 macOS 14 选择 Qwen 的 MLX 运行库，并在打包时核对其最低系统版本。
+
 ## 运行时资源占用
 
 2026-11-23 在 Apple M2 Pro、32 GiB 统一内存、macOS 26.5.1 上采样，间隔约 0.29 秒。待机数据取自运行中的桌面 App，当时 Qwen ASR 模型已加载。推理数据使用 App 随附的 Qwen3-ASR-1.7B 4-bit、Qwen3-4B-Instruct-2507 Q4_K_M 和 4.2 秒普通话样本。其中一个用例加入手动词汇和纠错参考文本，另一个用例省略两项。[双模型测试](src/business/QwenASR/Tests/QwenASRE2ETests.swift)
