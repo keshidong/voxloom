@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import Carbon
 import RxSwift
 import SpeechFoundation
@@ -551,8 +552,14 @@ import Testing
         let systemPaste = SystemPaste(board: board) { event, _ in
             if event.type == .keyDown { #expect(editor.readSelection(from: board, type: .string)) }
         }
+        let focus = TextInputFocusFixture()
+        let window = focus.element(role: kAXWindowRole)
+        let textEditor = focus.element(role: kAXGroupRole, selection: editor.selectedRange(),
+                                       writable: [kAXSelectedTextAttribute])
+        focus.set(kAXFocusedWindowAttribute, on: focus.app, to: window)
+        focus.set(kAXFocusedUIElementAttribute, on: window, to: textEditor)
         let insertion = CaretInsertion(foregroundTarget: { 101 }, canPost: { true },
-            paste: systemPaste.paste, captureFocus: { _ in { true } })
+            paste: systemPaste.paste, captureFocus: { _ in focus.input.captureFocus(in: focus.app) })
         let app = VoxloomCoordinator(root: FileManager.default.temporaryDirectory, defaults: defaults,
             recognizer: { _ in SampleRecognizer(text: transcript) }, capture: { capture }, insertion: insertion,
             activate: {}, permissions: .init(isTrusted: { true }, canPostEvents: { true },
