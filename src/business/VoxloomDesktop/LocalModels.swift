@@ -3,6 +3,7 @@ import SpeechFoundation
 import SpeechInput
 
 struct LocalModels {
+    static let qwenVoiceActivityGroup = "qwenVoiceActivity"
     let root: URL
     let downloads: ModelDownloads?
 
@@ -26,7 +27,9 @@ struct LocalModels {
         switch settings.model {
         case .qwen:
             return QwenASRRecognizer(configuration: .init(executable: file("qwen-asr-runtime/qwen-asr"),
-                model: weightFile("Qwen3-ASR-1.7B-4bit", group: settings.model.rawValue)))
+                model: weightFile("Qwen3-ASR-1.7B-4bit", group: settings.model.rawValue),
+                voiceActivity: .init(executable: file("vad-speech-segments"),
+                    model: weightFile("ggml-silero-v5.1.2.bin", group: Self.qwenVoiceActivityGroup))))
         case .whisperTurbo: weight = "ggml-large-v3-turbo-q5_0.bin"
         case .whisperBase: weight = "ggml-base.bin"
         case .whisperTiny: weight = "ggml-tiny.bin"

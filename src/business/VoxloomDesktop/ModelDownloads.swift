@@ -8,12 +8,19 @@ struct ModelDownloads: Sendable {
         let url: URL
         let sha256: String
         let bytes: Int64?
+        let fallbackURLs: [URL]?
 
-        init(path: String, url: URL, sha256: String, bytes: Int64? = nil) {
+        init(path: String, url: URL, sha256: String, bytes: Int64? = nil, fallbackURLs: [URL]? = nil) {
             self.path = path
             self.url = url
             self.sha256 = sha256
             self.bytes = bytes
+            self.fallbackURLs = fallbackURLs
+        }
+
+        var sources: [URL] {
+            var seen = Set<URL>()
+            return ([url] + (fallbackURLs ?? [])).filter { seen.insert($0).inserted }
         }
     }
 
@@ -64,22 +71,24 @@ struct ModelDownloads: Sendable {
         defer { try? manager.removeItem(at: stage) }
         let expectedBytes = files.reduce(0) { $0 + ($1.bytes ?? 1) }
         var installedBytes: Int64 = 0
+        var preferredHost: String?
         for asset in files {
             try Task.checkCancellation()
             let completed = installedBytes
             let expected = asset.bytes ?? 1
-            let file = try await download(asset.url) { written, responseSize in
+            let verified = try await downloadVerified(asset, preferredHost: preferredHost, using: download) { written, responseSize in
                 let fileSize = asset.bytes ?? responseSize
                 guard fileSize > 0 else { progress(nil); return }
                 let fraction = min(1, Double(written) / Double(fileSize))
                 progress((Double(completed) + fraction * Double(expected)) / Double(expectedBytes))
             }
+            let file = verified.file
             defer { try? manager.removeItem(at: file) }
-            try Self.verify(file, checksum: asset.sha256)
             let destination = stage.appending(path: asset.path)
             try manager.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
             try manager.moveItem(at: file, to: destination)
             installedBytes += expected
+            preferredHost = verified.source.host
         }
         try Task.checkCancellation()
         let destination = directory(for: model)
@@ -92,6 +101,58 @@ struct ModelDownloads: Sendable {
             }
         } catch {
             if !isInstalled(model) { throw error }
+        }
+    }
+
+    private func downloadVerified(_ asset: Asset, preferredHost: String?, using download: Download,
+                                  progress: @escaping TransferProgress) async throws -> (file: URL, source: URL) {
+        var sources = asset.sources
+        if let preferredHost, let index = sources.firstIndex(where: { $0.host == preferredHost }), index != 0 {
+            let source = sources.remove(at: index)
+            sources.insert(source, at: 0)
+        }
+        for (index, source) in sources.enumerated() {
+            try Task.checkCancellation()
+            var received: URL?
+            do {
+                let file = try await receive(source, using: download, progress: progress)
+                received = file
+                try Task.checkCancellation()
+                try Self.verify(file, checksum: asset.sha256)
+                return (file, source)
+            } catch {
+                if let received { try? FileManager.default.removeItem(at: received) }
+                try Task.checkCancellation()
+                guard index + 1 < sources.count, Self.canTryAnotherSource(after: error) else { throw error }
+                progress(0, -1)
+            }
+        }
+        throw DownloadError.badResponse
+    }
+
+    private func receive(_ source: URL, using download: Download, progress: @escaping TransferProgress) async throws -> URL {
+        let reporting = OSAllocatedUnfairLock(initialState: true)
+        defer { reporting.withLock { $0 = false } }
+        return try await download(source) { written, total in
+            reporting.withLock { if $0 { progress(written, total) } }
+        }
+    }
+
+    private static func canTryAnotherSource(after error: any Error) -> Bool {
+        if let error = error as? DownloadError {
+            switch error {
+            case .badResponse, .checksumMismatch: return true
+            case let .httpStatus(code): return [401, 403, 404, 408, 410, 429].contains(code) || (500..<600).contains(code)
+            case .unknownModel: return false
+            }
+        }
+        guard let error = error as? URLError else { return false }
+        switch error.code {
+        case .networkConnectionLost, .timedOut, .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed,
+             .badServerResponse, .cannotParseResponse, .resourceUnavailable, .zeroByteResource, .secureConnectionFailed:
+            return true
+        default:
+            return false
         }
     }
 

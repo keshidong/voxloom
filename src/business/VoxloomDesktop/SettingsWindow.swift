@@ -152,10 +152,18 @@ import SpeechFoundation
 
     func updateModelDownloads(_ setup: ModelPreparation, settings: DictationSettings) {
         let model = settings.model
-        recognitionDownload.render(model.title, status: setup.status(for: model.rawValue))
+        let recognitionStatus = setup.status(for: model.rawValue)
+        let activityGroup = LocalModels.qwenVoiceActivityGroup
+        if model == .qwen, recognitionStatus == .ready,
+           let activityStatus = setup.statusIfAvailable(for: activityGroup), activityStatus != .ready {
+            recognitionDownload.render("Qwen 人声检测", status: activityStatus)
+            recognitionDownload.onRetry = { [weak self] in self?.onRetryModel?(activityGroup) }
+        } else {
+            recognitionDownload.render(model.title, status: recognitionStatus)
+            recognitionDownload.onRetry = { [weak self] in self?.onRetryModel?(model.rawValue) }
+        }
         correctionDownload.render("Qwen3-4B Instruct", status: settings.correctsText ? setup.status(for: "correction") : nil)
         isolationDownload.render("人声分离模型", status: settings.usesVoiceIsolation ? setup.status(for: "voiceIsolation") : nil)
-        recognitionDownload.onRetry = { [weak self] in self?.onRetryModel?(model.rawValue) }
         correctionDownload.onRetry = { [weak self] in self?.onRetryModel?("correction") }
         isolationDownload.onRetry = { [weak self] in self?.onRetryModel?("voiceIsolation") }
     }

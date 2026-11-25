@@ -5,8 +5,13 @@ public struct QwenASRConfiguration: Sendable {
     public let executable: URL
     public let model: URL
     public let timeout: Duration
-    public init(executable: URL, model: URL, timeout: Duration = .seconds(90)) {
-        self.executable = executable; self.model = model; self.timeout = timeout
+    public let voiceActivity: QwenVoiceActivityConfiguration?
+    public init(executable: URL, model: URL, timeout: Duration = .seconds(90),
+                voiceActivity: QwenVoiceActivityConfiguration? = nil) {
+        self.executable = executable
+        self.model = model
+        self.timeout = timeout
+        self.voiceActivity = voiceActivity
     }
 }
 
@@ -16,6 +21,8 @@ public actor QwenASRRecognizer: SpeechRecognizer {
     let temporaryDirectory: URL
     private var worker: (any JSONWorkerRunning)?
     private var preparation: Task<Void, Never>?
+    private var voiceActivityTask: Task<Bool?, any Error>?
+    private var generation = 0
     private var busy = false
     public init(configuration: QwenASRConfiguration) {
         self.configuration = configuration
@@ -55,12 +62,20 @@ public actor QwenASRRecognizer: SpeechRecognizer {
         try validateResources()
         busy = true
         defer { busy = false }
-        await preparation?.value
-        try Task.checkCancellation()
+        let generation = self.generation
         let job = temporaryDirectory.appendingPathComponent("qwen-asr-" + UUID().uuidString)
         do { try FileManager.default.createDirectory(at: job, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700]) }
         catch { throw RecognitionError.fileAccess }
         defer { try? FileManager.default.removeItem(at: job) }
+        let speech = try await detectSpeech(audio, in: job)
+        try Task.checkCancellation()
+        guard generation == self.generation else { throw CancellationError() }
+        if speech == false {
+            return Transcript(text: "")
+        }
+        await preparation?.value
+        try Task.checkCancellation()
+        guard generation == self.generation else { throw CancellationError() }
         let input = job.appendingPathComponent("input.wav")
         do {
             try WAVCodec.encode(audio).write(to: input)
@@ -87,8 +102,25 @@ public actor QwenASRRecognizer: SpeechRecognizer {
             throw error
         }
     }
+
+    private func detectSpeech(_ audio: AudioClip, in job: URL) async throws -> Bool? {
+        guard let configuration = configuration.voiceActivity else { return nil }
+        let detection = Task { try await QwenVoiceActivity(configuration: configuration).detectsSpeech(audio, in: job) }
+        voiceActivityTask = detection
+        defer { voiceActivityTask = nil }
+        return try await withTaskCancellationHandler {
+            try await detection.value
+        } onCancel: {
+            detection.cancel()
+        }
+    }
+
     public func shutdown() async {
+        generation += 1
+        let detection = voiceActivityTask
+        detection?.cancel()
         preparation?.cancel()
+        _ = try? await detection?.value
         await preparation?.value
         await worker?.shutdown()
         worker = nil
@@ -98,8 +130,20 @@ public actor QwenASRRecognizer: SpeechRecognizer {
         let frameSize = AudioClip.sampleRate / 50  // 20 ms
         let minimumRMS = 32_768.0 * 0.001  // −60 dBFS, below the live recording threshold
         let minimumPower = minimumRMS * minimumRMS
+        let framesPerWindow = 10  // Compare the energy of 200 ms windows.
+        let frameCount = samples.count / frameSize
+        let checkBackground = frameCount >= 5 * framesPerWindow
+        let maximumBackgroundRMS = 32_768.0 * 0.025
+        let maximumBackgroundPower = maximumBackgroundRMS * maximumBackgroundRMS
+        let maximumBackgroundContrast = 2.25  // 1.5× in RMS
         var activeFrames = 0
-        for start in stride(from: 0, through: samples.count - frameSize, by: frameSize) {
+        var hasSustainedAudio = false
+        var windowPower = 0.0
+        var windowFrames = 0
+        var lowestPower = Double.infinity
+        var highestPower = 0.0
+        for frame in 0..<frameCount {
+            let start = frame * frameSize
             var sum = 0.0
             var sumOfSquares = 0.0
             for sample in samples[start..<(start + frameSize)] {
@@ -111,7 +155,23 @@ public actor QwenASRRecognizer: SpeechRecognizer {
             let mean = sum / Double(frameSize)
             let power = sumOfSquares / Double(frameSize) - mean * mean
             activeFrames = power >= minimumPower ? activeFrames + 1 : 0
-            if activeFrames == 3 { return true }
+            hasSustainedAudio = hasSustainedAudio || activeFrames >= 3
+            if hasSustainedAudio && !checkBackground { return true }
+
+            windowPower += power
+            windowFrames += 1
+            if windowFrames == framesPerWindow || frame == frameCount - 1 {
+                let averagePower = windowPower / Double(windowFrames)
+                lowestPower = min(lowestPower, averagePower)
+                highestPower = max(highestPower, averagePower)
+                windowPower = 0
+                windowFrames = 0
+            }
+            // Quiet audio with a steady envelope can be a fan or mains hum.
+            if hasSustainedAudio,
+               highestPower > maximumBackgroundPower || highestPower > lowestPower * maximumBackgroundContrast {
+                return true
+            }
         }
         return false
     }
