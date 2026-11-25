@@ -69,6 +69,62 @@ import Testing
         try await verifyFirstLaunch(.later)
     }
 
+    @Test func holdingFnRequestsFirstMicrophoneAuthorization() async throws {
+        _ = NSApplication.shared
+        let suite = UUID().uuidString
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let clock = HistoricalScheduler(initialClock: Date(timeIntervalSince1970: 0))
+        let capture = FlowCapture()
+        let requested = AsyncStream<Void>.makeStream()
+        let permissionResponse = AsyncStream<Void>.makeStream()
+        var authorization = MicrophoneCapture.Authorization.notDetermined
+        var keys: DictationKeyInput?
+        let app = VoxloomCoordinator(root: FileManager.default.temporaryDirectory, defaults: defaults,
+            recognizer: { _ in SampleRecognizer() }, capture: { capture }, activate: {},
+            permissions: .init(isTrusted: { true }, canPostEvents: { true },
+                microphoneAuthorization: { authorization }, requestMicrophone: {
+                    requested.continuation.yield(())
+                    var response = permissionResponse.stream.makeAsyncIterator()
+                    _ = await response.next()
+                    authorization = .authorized
+                    return true
+                }), keyScheduler: clock, makeMonitor: { input in
+                    keys = input
+                    return DictationKeyMonitor(input: input, isTrusted: { false })
+                })
+        app.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
+        defer {
+            requested.continuation.finish()
+            permissionResponse.continuation.finish()
+            app.overlay.panel.orderOut(nil)
+        }
+        let key = try #require(keys)
+        #expect(!app.overlay.enableMicrophone.isHiddenOrHasHiddenAncestor)
+        key.changed(down: true, at: 0)
+        clock.advanceTo(clock.clock.addingTimeInterval(0.2))
+        let promptsForMicrophone = app.overlay.status.stringValue == "等待麦克风授权"
+        #expect(promptsForMicrophone)
+        #expect(app.flow.canStart)
+        #expect(capture.receive == nil)
+        key.changed(down: false, at: 0.3)
+        if promptsForMicrophone {
+            var requests = requested.stream.makeAsyncIterator()
+            _ = await requests.next()
+            permissionResponse.continuation.finish()
+            let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+            while app.overlay.status.stringValue == "等待麦克风授权" && ContinuousClock.now < deadline {
+                await Task.yield()
+            }
+            #expect(app.overlay.status.stringValue.hasPrefix("按住 Fn"))
+            #expect(app.overlay.enableMicrophone.isHiddenOrHasHiddenAncestor)
+            #expect(authorization == .authorized)
+            #expect(app.flow.canStart)
+            #expect(capture.receive == nil)
+        }
+        await app.stop()
+    }
+
     @Test func anEarlierAcknowledgmentDoesNotBypassMissingAccessibilityOnLaunch() async throws {
         _ = NSApplication.shared
         let suite = UUID().uuidString

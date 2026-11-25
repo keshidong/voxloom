@@ -336,6 +336,7 @@ import SpeechFoundation
             refreshPermissions()
             guard !needsAccessibilityGuide, microphoneAuthorization == .authorized else {
                 overlay.show(in: NSScreen.main?.visibleFrame)
+                if !needsAccessibilityGuide, microphoneAuthorization == .notDetermined { enableMicrophone() }
                 return
             }
             if flow.canStart { enrollment.stopPlayback() }
