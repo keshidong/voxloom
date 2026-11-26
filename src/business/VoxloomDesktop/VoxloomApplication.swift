@@ -40,6 +40,8 @@ import SpeechFoundation
             }
         },
         action: { [weak self] event in self?.receive(event) })
+    private lazy var mouseInput = DictationKeyInput(scheduler: keyScheduler, canConfirm: { false },
+        action: { [weak self] event in self?.receive(event, from: .mouse) })
     private var monitor: DictationKeyMonitor?
     private var availability = DictationAvailability()
     private var deferredAccessibility = false
@@ -164,6 +166,7 @@ import SpeechFoundation
     }
 
     func stop() async {
+        overlay.holdToTalk.cancelPress()
         enrollment.cancel()
         settingsWindow.stopTriggerCapture()
         microphoneRequest?.cancel()
@@ -183,6 +186,10 @@ import SpeechFoundation
     }
 
     private func wireControls() {
+        overlay.holdToTalk.onPressChanged = { [weak self] down, timestamp in
+            self?.mouseInput.changed(down: down, at: timestamp)
+        }
+        overlay.holdToTalk.onCancelPress = { [weak self] in self?.mouseInput.interrupt() }
         for (control, selector) in [
             (overlay.settings, #selector(showSettings)),
             (overlay.enableAccessibility, #selector(enableAccessibility)),
@@ -342,20 +349,21 @@ import SpeechFoundation
         overlay.render(flow, availability: availability, setup: setup)
     }
 
-    private func receive(_ event: FunctionKeyGesture.Action) {
+    private func receive(_ event: FunctionKeyGesture.Action, from source: VoxloomFlow.RecordingSource = .keyboard) {
         if event == .start {
             guard enrollment.active == nil else { return }
             refreshPermissions()
             guard !needsAccessibilityGuide, microphoneAuthorization == .authorized else {
-                overlay.show(in: NSScreen.main?.visibleFrame)
+                if source == .mouse { overlay.holdToTalk.cancelPress() }
+                else { overlay.show(in: NSScreen.main?.visibleFrame) }
                 if !needsAccessibilityGuide, microphoneAuthorization == .notDetermined { enableMicrophone() }
                 return
             }
             if flow.canStart { enrollment.stopPlayback() }
         }
         if event == .confirm || (event == .start && flow.canStart) { overlay.finishKeyboardEdit() }
-        flow.handle(event)
-        if event == .start { overlay.show(in: NSScreen.main?.visibleFrame) }
+        flow.handle(event, from: source)
+        if event == .start, source == .keyboard { overlay.show(in: NSScreen.main?.visibleFrame) }
     }
 
     @objc func showOverlay() { overlay.show() }

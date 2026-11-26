@@ -8,6 +8,132 @@ import Testing
 @testable import VoxloomDesktop
 
 @MainActor @Suite(.serialized) struct VoxloomApplicationTests {
+    @Test(arguments: [false, true])
+    func holdingTheVoiceBarButtonAndReleasingOutsideInsertsAtTheOriginalCaret(overlapsShortcut: Bool) async throws {
+        _ = NSApplication.shared
+        let domain = UUID().uuidString
+        let defaults = try #require(UserDefaults(suiteName: domain))
+        defer { defaults.removePersistentDomain(forName: domain) }
+        let capture = FlowCapture()
+        let clock = HistoricalScheduler(initialClock: Date(timeIntervalSince1970: 0))
+        var inserted: String?
+        var keyboard: DictationKeyInput?
+        let app = VoxloomCoordinator(root: FileManager.default.temporaryDirectory, defaults: defaults,
+            recognizer: { _ in SampleRecognizer(text: "第一段") }, capture: { capture },
+            insertion: .init(foregroundTarget: { 101 }, canPost: { true }, paste: { text, pid in
+                #expect(pid == 101)
+                inserted = text
+                return true
+            }, captureFocus: { _ in { true } }), activate: { Issue.record("The voice bar must not activate Voxloom") },
+            permissions: .init(isTrusted: { true }, canPostEvents: { true },
+                microphoneAuthorization: { .authorized }), keyScheduler: clock, makeMonitor: { input in
+                    keyboard = input
+                    return DictationKeyMonitor(input: input, isTrusted: { false })
+                })
+        app.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
+        let panel = app.overlay.panel
+        defer { panel.orderOut(nil) }
+        let content = try #require(panel.contentView)
+        let button = try #require(findButton(labeled: "按住说话", in: content))
+        content.layoutSubtreeIfNeeded()
+        #expect(button.frame.width >= 28 && button.frame.height >= 28)
+        let center = button.convert(NSPoint(x: button.bounds.midX, y: button.bounds.midY), to: nil)
+        let outside = NSPoint(x: content.bounds.maxX + 24, y: center.y)
+        func send(_ type: NSEvent.EventType, at point: NSPoint, time: TimeInterval) throws {
+            panel.sendEvent(try mouseEvent(type, in: panel, at: point, time: time))
+        }
+
+        try send(.leftMouseDown, at: center, time: 0)
+        clock.advanceTo(clock.clock.addingTimeInterval(0.1))
+        try send(.leftMouseUp, at: center, time: 0.1)
+        clock.advanceTo(clock.clock.addingTimeInterval(0.2))
+        #expect(app.flow.canStart)
+        #expect(capture.receive == nil)
+
+        try send(.leftMouseDown, at: center, time: 0.3)
+        clock.advanceTo(clock.clock.addingTimeInterval(0.2))
+        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while capture.receive == nil && ContinuousClock.now < deadline { await Task.yield() }
+        try #require(capture.receive != nil)
+        capture.receive?([3000, -3000])
+        while app.flow.state?.live.samples.count != 2 && ContinuousClock.now < deadline { await Task.yield() }
+        try #require(app.flow.state?.live.samples.count == 2)
+        #expect(!panel.isKeyWindow)
+        #expect(inserted == nil)
+        if overlapsShortcut {
+            let input = try #require(keyboard)
+            input.changed(down: true, at: 0.6)
+            clock.advanceTo(clock.clock.addingTimeInterval(0.2))
+            input.changed(down: false, at: 0.8)
+            capture.receive?([5000, -5000])
+            while app.flow.state?.live.samples.count != 4 && !app.flow.canStart && ContinuousClock.now < deadline {
+                await Task.yield()
+            }
+            #expect(app.flow.state?.live.samples.count == 4)
+            #expect(inserted == nil)
+        }
+        try send(.leftMouseDragged, at: outside, time: 0.9)
+        try send(.leftMouseUp, at: outside, time: 1.0)
+        while !app.flow.canStart && ContinuousClock.now < deadline { await Task.yield() }
+        #expect(inserted == "第一段")
+        #expect(app.flow.canStart)
+        await app.stop()
+    }
+
+    @Test func theMouseButtonWorksWithMicrophoneOnlyAfterDeferringAccessibility() async throws {
+        _ = NSApplication.shared
+        let domain = UUID().uuidString
+        let defaults = try #require(UserDefaults(suiteName: domain))
+        defer { defaults.removePersistentDomain(forName: domain) }
+        let capture = FlowCapture()
+        let clock = HistoricalScheduler(initialClock: Date(timeIntervalSince1970: 0))
+        var microphone = MicrophoneCapture.Authorization.notDetermined
+        var requests = 0
+        let app = VoxloomCoordinator(root: FileManager.default.temporaryDirectory, defaults: defaults,
+            recognizer: { _ in SampleRecognizer(text: "保留草稿") }, capture: { capture },
+            insertion: .init(foregroundTarget: { 101 }, canPost: { false }, paste: { _, _ in
+                Issue.record("Automatic insertion requires Accessibility")
+                return false
+            }), activate: {}, permissions: .init(isTrusted: { false }, canPostEvents: { false },
+                microphoneAuthorization: { microphone }, requestMicrophone: {
+                    requests += 1
+                    microphone = .authorized
+                    return true
+                }), keyScheduler: clock)
+        app.connectViews()
+        let panel = app.overlay.panel
+        defer { panel.orderOut(nil) }
+        app.overlay.deferAccessibility.performClick(nil)
+        let content = try #require(panel.contentView)
+        let button = try #require(findButton(labeled: "按住说话", in: content))
+        content.layoutSubtreeIfNeeded()
+        let point = button.convert(NSPoint(x: button.bounds.midX, y: button.bounds.midY), to: nil)
+
+        button.mouseDown(with: try mouseEvent(.leftMouseDown, in: panel, at: point, time: 0))
+        clock.advanceTo(clock.clock.addingTimeInterval(0.2))
+        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while requests == 0 && ContinuousClock.now < deadline { await Task.yield() }
+        #expect(requests == 1)
+        #expect(capture.receive == nil)
+        #expect(app.overlay.status.stringValue == "按住左侧声波说话")
+        try #require(!button.isHighlighted)
+
+        // A system permission dialog can receive the first mouse-up event.
+        button.mouseDown(with: try mouseEvent(.leftMouseDown, in: panel, at: point, time: 0.4))
+        clock.advanceTo(clock.clock.addingTimeInterval(0.2))
+        while capture.receive == nil && ContinuousClock.now < deadline { await Task.yield() }
+        try #require(capture.receive != nil)
+        capture.receive?([3000, -3000])
+        while capture.receive != nil && app.flow.state?.live.samples.count != 2 && ContinuousClock.now < deadline {
+            await Task.yield()
+        }
+        button.mouseUp(with: try mouseEvent(.leftMouseUp, in: panel, at: point, time: 0.7))
+        while !app.flow.canStart && ContinuousClock.now < deadline { await Task.yield() }
+        #expect(app.flow.state?.text == "保留草稿")
+        #expect(app.overlay.status.stringValue == InsertionError.permission.localizedDescription)
+        await app.stop()
+    }
+
     @Test func settingsRecordsTheCompleteShortcutAndCanRestoreFn() throws {
         let app = NSApplication.shared
         let settings = SettingsWindow(settings: .init())
@@ -157,7 +283,7 @@ import Testing
             while app.overlay.status.stringValue == "等待麦克风授权" && ContinuousClock.now < deadline {
                 await Task.yield()
             }
-            #expect(app.overlay.status.stringValue.hasPrefix("按住 Fn"))
+            #expect(app.overlay.status.stringValue == "按住左侧声波说话")
             #expect(app.overlay.enableMicrophone.isHiddenOrHasHiddenAncestor)
             #expect(authorization == .authorized)
             #expect(app.flow.canStart)
@@ -775,7 +901,7 @@ import Testing
         workspace.post(name: NSWorkspace.didActivateApplicationNotification, object: NSWorkspace.shared)
         #expect(enableAccessibility.isHiddenOrHasHiddenAncestor)
         #expect(!settingsAction.isEnabled)
-        #expect(app.overlay.status.stringValue == "按住 Fn 说话，松开插入")
+        #expect(app.overlay.status.stringValue == "按住声波或 Fn 说话")
         #expect(app.applicationShouldTerminate(NSApp) == .terminateLater)
         let end = ContinuousClock.now.advanced(by: .seconds(1))
         while !quit && ContinuousClock.now < end { await Task.yield() }
@@ -877,6 +1003,13 @@ import Testing
 
 @MainActor private final class ShortcutCaptureTestWindow: NSWindow {
     override var isKeyWindow: Bool { true }
+}
+
+@MainActor private func mouseEvent(_ type: NSEvent.EventType, in window: NSWindow, at point: NSPoint,
+                                   time: TimeInterval) throws -> NSEvent {
+    try #require(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: time,
+        windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1,
+        pressure: type == .leftMouseUp ? 0 : 1))
 }
 
 @MainActor private func findButton(labeled label: String, in view: NSView) -> NSButton? {

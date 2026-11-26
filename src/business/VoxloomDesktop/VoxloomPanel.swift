@@ -59,6 +59,7 @@ enum VoiceBarSetup {
     private let textPanel = VoxloomPanel(height: editorPanelHeight, allowsKeyboardFocus: true)
     private let barSurface = VoiceBarSurface()
     private let textSurface = VoiceBarSurface()
+    let holdToTalk = HoldToTalkButton()
     let settings = NSButton(title: "设置", target: nil, action: nil)
     let enableAccessibility = NSButton(title: "启用辅助功能", target: nil, action: nil)
     let deferAccessibility = NSButton(title: "稍后", target: nil, action: nil)
@@ -174,7 +175,15 @@ enum VoiceBarSetup {
             sentIcon.widthAnchor.constraint(equalToConstant: VoiceWaveformView.size.width),
             sentIcon.heightAnchor.constraint(equalToConstant: VoiceWaveformView.size.height)
         ])
-        let bar = NSStackView(views: [waveform, sentIcon, status, meter, progress, downloadProgress, NSView(),
+        for icon in [waveform, sentIcon] {
+            icon.translatesAutoresizingMaskIntoConstraints = false
+            holdToTalk.addSubview(icon)
+            NSLayoutConstraint.activate([
+                icon.centerXAnchor.constraint(equalTo: holdToTalk.centerXAnchor),
+                icon.centerYAnchor.constraint(equalTo: holdToTalk.centerYAnchor)
+            ])
+        }
+        let bar = NSStackView(views: [holdToTalk, status, meter, progress, downloadProgress, NSView(),
                                      enableMicrophone, retryModelDownload, enableAccessibility, deferAccessibility,
                                      draftToggle, settings, close])
         bar.alignment = .centerY
@@ -244,6 +253,7 @@ enum VoiceBarSetup {
     }
 
     @objc private func hide() {
+        holdToTalk.cancelPress()
         textPanel.orderOut(nil)
         panel.orderOut(nil)
     }
@@ -357,12 +367,12 @@ enum VoiceBarSetup {
         meter.isHidden = phase != .recording
         meter.doubleValue = level
         waveform.update(level: phase == .recording ? level : nil)
+        let readyHint = availability.globalShortcut ? "按住声波或 \(key) 说话" : "按住左侧声波说话"
         let stateText = switch phase {
         case .authorizing: "等待麦克风授权"
         case .recording: "正在录音  \(Int(current?.live.seconds ?? 0)) 秒"
         case .finishing: "正在整理最后一段"
-        case .idle:
-            available ? "草稿已就绪" : (availability.globalShortcut && availability.canInsert ? "按住 \(key) 说话，松开插入" : "按住 \(key) 说话")
+        case .idle: available ? "草稿已就绪" : readyHint
         }
         let correctionText: String?
         switch current?.correction {
