@@ -45,9 +45,12 @@ public struct LiveTransition: Sendable {
 }
 
 public enum LiveReducer {
+    /// Preprocessed previews can opt into an earlier first submission and faster retries before text appears.
     public static func reduce(_ previous: LiveState, _ event: LiveEvent,
-                              recognizesWhileRecording: Bool = true, requiresFinalRecognition: Bool = false) -> LiveTransition {
-        let firstPreviewSamples = AudioClip.sampleRate
+                              recognizesWhileRecording: Bool = true, requiresFinalRecognition: Bool = false,
+                              usesShortPreviewCadence: Bool = false) -> LiveTransition {
+        let firstPreviewSamples = usesShortPreviewCadence ? AudioClip.sampleRate * 3 / 4 : AudioClip.sampleRate
+        let emptyPreviewRefreshSamples = usesShortPreviewCadence ? AudioClip.sampleRate / 4 : AudioClip.sampleRate / 2
         let refreshSamples = AudioClip.sampleRate / 2
         var state = previous
         var effects: [LiveEffect] = []
@@ -60,6 +63,14 @@ public enum LiveReducer {
             state.submissionIsFinal = isFinal
             state.submitted = state.samples.count
             effects.append(.recognize(state.session, state.samples))
+        }
+        func submitPreviewIfReady() {
+            guard recognizesWhileRecording, state.phase == .recording else { return }
+            let minimumNewSamples: Int
+            if state.submitted == 0 { minimumNewSamples = firstPreviewSamples }
+            else if state.text.isEmpty { minimumNewSamples = emptyPreviewRefreshSamples }
+            else { minimumNewSamples = refreshSamples }
+            if state.samples.count - state.submitted >= minimumNewSamples { submit() }
         }
         func finish() {
             state.level = 0
@@ -85,12 +96,9 @@ public enum LiveReducer {
             state.level = samples.isEmpty ? 0 : sqrt(samples.reduce(0.0) { $0 + pow(Double($1) / 32768, 2) } / Double(samples.count))
             state.hasVoice = state.hasVoice || state.level > 0.002
             if state.samples.count == AudioClip.maximumSamples { finish() }
-            else if recognizesWhileRecording, state.text.isEmpty {
-                let minimumNewSamples = state.submitted == 0 ? firstPreviewSamples : refreshSamples
-                if state.samples.count - state.submitted >= minimumNewSamples { submit() }
-            }
+            else { submitPreviewIfReady() }
         case .pulse where state.phase == .recording:
-            if recognizesWhileRecording && state.submitted > 0 && state.samples.count - state.submitted >= refreshSamples { submit() }
+            if state.submitted > 0 { submitPreviewIfReady() }
         case .result(let session, let revision, let text) where session == state.session && state.busy && revision == state.submitted:
             state.text = text
             state.busy = false
@@ -100,12 +108,13 @@ public enum LiveReducer {
                     state.phase = .idle
                 }
                 else { submit() }
-            } else if state.samples.count - state.submitted >= refreshSamples { submit() }
+            } else { submitPreviewIfReady() }
         case .previewFailed(let session, let revision)
             where session == state.session && state.busy && revision == state.submitted && !state.submissionIsFinal:
             state.consecutivePreviewFailures += 1
             state.busy = false
-            if state.phase == .finishing || state.samples.count - state.submitted >= refreshSamples { submit() }
+            if state.phase == .finishing { submit() }
+            else { submitPreviewIfReady() }
         case .stop where state.phase == .recording:
             finish()
         case .failed(let session, let message) where session == state.session && state.phase != .idle:

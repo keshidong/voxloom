@@ -38,7 +38,7 @@ actor FixedRecognizer: SpeechRecognizer {
     func isolatedPreviewUsesFilteredAudioAndStillFinalizesTheOriginalRecording(previewAvailable: Bool) async throws {
         let capture = FakeCapture()
         let recognizer = AudioRecorder()
-        let raw = Array(repeating: Int16(1000), count: AudioClip.sampleRate)
+        let raw = Array(repeating: Int16(1000), count: AudioClip.sampleRate * 3 / 4)
         let session = LiveSpeechSession(capture: capture, prepareFinalAudio: { clip in
             #expect(clip.samples == raw)
             return try AudioClip(samples: [321, -321])
@@ -88,18 +88,21 @@ actor FixedRecognizer: SpeechRecognizer {
             await Task.yield()
         }
     }
-    @Test func audioProducesTheFirstPreviewWithoutAdvancingTheClock() async throws {
+    @Test func audioProducesAndRefreshesThePreviewWithoutAdvancingTheClock() async throws {
         let capture = FakeCapture()
         let clock = HistoricalScheduler(initialClock: Date(timeIntervalSince1970: 0))
         let session = LiveSpeechSession(capture: capture, scheduler: clock)
         session.start(recognizer: FixedRecognizer())
         try await waitUntil { session.state.phase == .recording }
         #expect(session.state.phase == .recording)
-        capture.sink?(Array(repeating: 1000, count: 24_000))
-        try await waitUntil { session.state.samples.count == 24_000 }
+        let firstSamples = AudioClip.sampleRate
+        capture.sink?(Array(repeating: 1000, count: firstSamples))
         try await waitUntil { !session.state.text.isEmpty }
         #expect(session.state.text == "实时中文 English")
         #expect(session.state.phase == .recording)
+        let additionalSamples = AudioClip.sampleRate / 2
+        capture.sink?(Array(repeating: 1000, count: additionalSamples))
+        try await waitUntil { session.state.submitted == firstSamples + additionalSamples && !session.state.busy }
         session.stop()
         try await waitUntil { session.state.phase == .idle }
         #expect(session.state.phase == .idle)

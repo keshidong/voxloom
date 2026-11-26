@@ -13,6 +13,7 @@ private let chineseAudio = bundleResources?.appendingPathComponent("chinese.wav"
 private let englishAudio = bundleResources?.appendingPathComponent("english.wav") ?? root.appendingPathComponent(".runtime/whisper.cpp-1.8.2/samples/jfk.wav")
 private let corpusPath = ProcessInfo.processInfo.environment["VOXLOOM_CORRECTION_CORPUS"]
 private let noiseFixtures = ProcessInfo.processInfo.environment["VOXLOOM_QWEN_NOISE_FIXTURES"]
+private let roomToneFixtures = ProcessInfo.processInfo.environment["VOXLOOM_QWEN_ROOM_TONE_FIXTURES"]
 private let shortAcknowledgement = ProcessInfo.processInfo.environment["VOXLOOM_QWEN_SHORT_ACK_WAV"]
 private let voiceActivity = QwenVoiceActivityConfiguration(
     executable: bundleResources?.appendingPathComponent("vad-speech-segments")
@@ -25,6 +26,25 @@ private let hasVoiceActivity = FileManager.default.isExecutableFile(atPath: voic
     && FileManager.default.isReadableFile(atPath: voiceActivity.model.path)
 
 @Suite(.serialized) struct QwenASRE2ETests {
+    @Test(.enabled(if: roomToneFixtures != nil, "Set VOXLOOM_QWEN_ROOM_TONE_FIXTURES to the local replay directory"),
+          arguments: ["room-tone.wav", "near-click.wav"])
+    func realRoomToneDoesNotProduceATranscript(fixture: String) async throws {
+        try #require(hasVoiceActivity)
+        let directory = URL(fileURLWithPath: try #require(roomToneFixtures))
+        let audio = try WAVCodec.decode(Data(contentsOf: directory.appendingPathComponent(fixture)))
+        let recognizer = QwenASRRecognizer(configuration: .init(executable: asrExecutable, model: asrModel,
+                                                               voiceActivity: voiceActivity))
+        do {
+            let result = try await recognizer.transcribe(audio, options: .init())
+            let hasTranscript = !result.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            #expect(!hasTranscript)
+        } catch {
+            await recognizer.shutdown()
+            throw error
+        }
+        await recognizer.shutdown()
+    }
+
     @Test(.enabled(if: noiseFixtures != nil, "Run scripts/prepare-qwen-noise-fixtures.py first"),
           arguments: ["public-noise-48dBFS", "public-noise-38dBFS"])
     func realBackgroundNoiseDoesNotRegainFalseTranscripts(level: String) async throws {

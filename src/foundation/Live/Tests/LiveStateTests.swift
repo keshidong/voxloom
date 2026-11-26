@@ -80,6 +80,49 @@ struct LiveStateTests {
         #expect(recognizesImmediately)
     }
 
+    @Test func visiblePreviewRefreshesAsSoonAsEnoughNewAudioArrives() {
+        let initial = [Int16](repeating: 1000, count: AudioClip.sampleRate)
+        let more = [Int16](repeating: 1000, count: AudioClip.sampleRate / 2)
+        var state = LiveState()
+        for event in [LiveEvent.start, .ready(1), .audio(1, initial), .result(1, initial.count, "实时中文")] {
+            state = LiveReducer.reduce(state, event).state
+        }
+        let partial = LiveReducer.reduce(state, .audio(1, Array(more.dropLast())))
+        #expect(partial.effects.isEmpty)
+        let next = LiveReducer.reduce(partial.state, .audio(1, [1000]))
+        let refreshesImmediately = next.effects == [.recognize(1, initial + more)]
+        #expect(refreshesImmediately)
+    }
+
+    @Test func filteredPreviewStartsAt750MillisecondsAndRetriesAfter250MillisecondsUntilTextAppears() {
+        let firstSize = AudioClip.sampleRate * 3 / 4
+        let retrySize = AudioClip.sampleRate / 4
+        let refreshSize = AudioClip.sampleRate / 2
+        var state = LiveState()
+        func send(_ event: LiveEvent) -> LiveTransition {
+            let transition = LiveReducer.reduce(state, event, requiresFinalRecognition: true, usesShortPreviewCadence: true)
+            state = transition.state
+            return transition
+        }
+
+        _ = send(.start)
+        _ = send(.ready(1))
+        #expect(send(.audio(1, Array(repeating: 1000, count: firstSize - 1))).effects.isEmpty)
+        let first = send(.audio(1, [1000]))
+        let submittedFirst = first.effects == [.recognize(1, first.state.samples)]
+        #expect(submittedFirst)
+        _ = send(.result(1, firstSize, ""))
+        #expect(send(.audio(1, Array(repeating: 1000, count: retrySize - 1))).effects.isEmpty)
+        let retry = send(.audio(1, [1000]))
+        let submittedRetry = retry.effects == [.recognize(1, retry.state.samples)]
+        #expect(submittedRetry)
+        _ = send(.result(1, firstSize + retrySize, "实时中文"))
+        #expect(send(.audio(1, Array(repeating: 1000, count: refreshSize - 1))).effects.isEmpty)
+        let refresh = send(.audio(1, [1000]))
+        let submittedRefresh = refresh.effects == [.recognize(1, refresh.state.samples)]
+        #expect(submittedRefresh)
+    }
+
     @Test(arguments: [true, false])
     func onePreviewFailureCanRecoverBeforeRelease(retrySucceeds: Bool) {
         let first = [Int16](repeating: 1000, count: AudioClip.sampleRate)

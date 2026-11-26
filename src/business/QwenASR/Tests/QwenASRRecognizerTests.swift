@@ -3,8 +3,8 @@ import SpeechFoundation
 @testable import SpeechInput
 import Testing
 
-private let audibleTestSamples = (0..<(AudioClip.sampleRate / 10)).map { index in
-    Int16(128 * sin(Double(index) * 2 * .pi * 220 / Double(AudioClip.sampleRate)))
+private let audibleTestSamples = (0..<(AudioClip.sampleRate / 5)).map { index in
+    index < AudioClip.sampleRate / 10 ? 0 : Int16(128 * sin(Double(index) * 2 * .pi * 220 / Double(AudioClip.sampleRate)))
 }
 private let publicSpeechFixtures = ProcessInfo.processInfo.environment["VOXLOOM_QWEN_SPEECH_FIXTURES"]
 
@@ -119,6 +119,27 @@ struct QwenASRRecognizerTests {
         }
         let rms = sqrt(power / Double(normalized.samples.count))
         #expect(abs(rms - 0.03) < 0.00002)
+        await provider.shutdown()
+    }
+
+    @Test func voiceActivityDoesNotBoostSteadyRoomToneWithABriefClick() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let worker = ASRBoundary()
+        let provider = try recognizerWithDetector(in: root, script: """
+        #!/bin/sh
+        /bin/cp "$4" "$0.wav"
+        printf '%s\\n' 'Detected 0 speech segments:'
+        """, worker: worker)
+        var samples = (0..<(AudioClip.sampleRate / 2)).map { index in
+            Int16(96 * sin(Double(index) * 2 * .pi * 108 / Double(AudioClip.sampleRate)))
+        }
+        samples[4000] = 1000
+        let result = try await provider.transcribe(AudioClip(samples: samples), options: .init())
+        #expect(result.text.isEmpty)
+        let detectorInput = try WAVCodec.decode(Data(contentsOf: root.appendingPathComponent("vad.wav")))
+        #expect(detectorInput == (try AudioClip(samples: samples)))
         await provider.shutdown()
     }
 

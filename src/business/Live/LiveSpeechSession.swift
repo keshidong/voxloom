@@ -44,11 +44,13 @@ public extension AudioCapturing {
         self.ownsRecognizer = ownsRecognizer
         self.prepareFinalAudio = prepareFinalAudio
         self.preparePreviewAudio = preparePreviewAudio
+        let preparesPreviewAudio = preparePreviewAudio != nil
         input.observe(on: MainScheduler.asyncInstance)
             .scan(LiveReducer.reduce(LiveState(), .pulse)) { previous, event in
                 LiveReducer.reduce(previous.state, event,
-                    recognizesWhileRecording: prepareFinalAudio == nil || preparePreviewAudio != nil,
-                    requiresFinalRecognition: preparePreviewAudio != nil)
+                    recognizesWhileRecording: prepareFinalAudio == nil || preparesPreviewAudio,
+                    requiresFinalRecognition: preparesPreviewAudio,
+                    usesShortPreviewCadence: preparesPreviewAudio)
             }.subscribe(onNext: { [weak self] transition in
                 guard let self else { return }
                 state = transition.state
