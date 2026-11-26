@@ -614,6 +614,9 @@ import Testing
         capture.receive?(raw)
         try await waitFor { app.flow.state?.live.text == "预览" }
         #expect(app.flow.state?.live.phase == .recording)
+        let previewWindow = try #require(app.overlay.editor.window)
+        #expect(previewWindow.isVisible)
+        #expect(containsLabel("预览", in: try #require(previewWindow.contentView)))
         #expect(pasted.isEmpty)
         app.flow.handle(.stop)
         try await waitFor { !pasted.isEmpty }

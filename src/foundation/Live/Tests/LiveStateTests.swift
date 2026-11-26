@@ -64,6 +64,61 @@ struct LiveStateTests {
         #expect(next.effects.count == 1)
         #expect(next.state.submitted == sampleRate + sampleRate / 2)
     }
+
+    @Test func anEmptyPreviewRetriesAsSoonAsEnoughNewAudioArrives() {
+        let initial = [Int16](repeating: 1000, count: AudioClip.sampleRate)
+        let more = [Int16](repeating: 1000, count: AudioClip.sampleRate / 2)
+        var state = LiveState()
+        for event in [LiveEvent.start, .ready(1), .audio(1, initial), .result(1, initial.count, "")] {
+            state = LiveReducer.reduce(state, event).state
+        }
+        #expect(state.text.isEmpty)
+        let partial = LiveReducer.reduce(state, .audio(1, Array(more.dropLast())))
+        #expect(partial.effects.isEmpty)
+        let next = LiveReducer.reduce(partial.state, .audio(1, [1000]))
+        let recognizesImmediately = next.effects == [.recognize(1, initial + more)]
+        #expect(recognizesImmediately)
+    }
+
+    @Test(arguments: [true, false])
+    func onePreviewFailureCanRecoverBeforeRelease(retrySucceeds: Bool) {
+        let first = [Int16](repeating: 1000, count: AudioClip.sampleRate)
+        let extra = [Int16](repeating: 1000, count: AudioClip.sampleRate / 2)
+        var state = LiveState()
+        func send(_ event: LiveEvent) -> LiveTransition {
+            let next = LiveReducer.reduce(state, event, requiresFinalRecognition: true)
+            state = next.state
+            return next
+        }
+        _ = send(.start)
+        _ = send(.ready(1))
+        _ = send(.audio(1, first))
+        let retry: LiveTransition
+        if retrySucceeds {
+            #expect(send(.audio(1, extra)).effects.isEmpty)
+            retry = send(.previewFailed(1, first.count))
+        } else {
+            #expect(send(.previewFailed(1, first.count)).effects.isEmpty)
+            #expect(send(.pulse).effects.isEmpty)
+            retry = send(.audio(1, extra))
+        }
+        let retriesWithNewAudio = retry.effects == [.recognize(1, first + extra)]
+        #expect(retriesWithNewAudio)
+        if retrySucceeds {
+            _ = send(.result(1, first.count + extra.count, "预览"))
+            #expect(state.text == "预览")
+            #expect(state.phase == .recording)
+        } else {
+            _ = send(.previewFailed(1, first.count + extra.count))
+            #expect(send(.audio(1, extra)).effects.isEmpty)
+            #expect(send(.pulse).effects.isEmpty)
+        }
+        let recorded = state.samples
+        let release = send(.stop)
+        let recognizesFinal = release.effects == [.stopCapture, .recognize(1, recorded)]
+        #expect(recognizesFinal)
+    }
+
     @Test func startRequestsPermissionAndIgnoresRepeatedStart() {
         let first = LiveReducer.reduce(LiveState(), .start)
         #expect(first.state.phase == .authorizing)

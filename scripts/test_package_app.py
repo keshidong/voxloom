@@ -19,6 +19,7 @@ class AppBundlePackagingTest(unittest.TestCase):
 
             resources = root / "Staged.app/Contents/Resources"
             self.assertTrue((resources / "vad-speech-segments").is_file())
+            self.assertTrue((resources / "voxloom-vad").is_file())
             self.assertFalse((resources / "ggml-silero-v5.1.2.bin").exists())
 
     def test_voxloom_display_name_follows_the_bundle_language(self):
@@ -74,6 +75,7 @@ class AppBundlePackagingTest(unittest.TestCase):
             ".build/release/voxloom",
             ".runtime/whisper-build/bin/whisper-cli",
             ".runtime/whisper-build/bin/vad-speech-segments",
+            ".runtime/whisper-build/bin/voxloom-vad",
             ".runtime/asr_zh.wav",
             ".runtime/whisper.cpp-1.8.2/samples/jfk.wav",
             ".runtime/RxSwift-6.10.2/LICENSE.md",

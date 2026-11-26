@@ -16,7 +16,7 @@ import SpeechFoundation
 }
 
 @MainActor final class VoxloomCoordinator: NSObject, NSApplicationDelegate {
-    let overlay = VoxloomOverlay()
+    let overlay: VoxloomOverlay
     let settingsWindow: SettingsWindow
     let flow: VoxloomFlow
     private let defaults: UserDefaults
@@ -67,6 +67,7 @@ import SpeechFoundation
          replyToQuit: @escaping (Bool) -> Void = { NSApp.reply(toApplicationShouldTerminate: $0) }) {
         self.defaults = defaults
         self.pasteboard = pasteboard
+        overlay = VoxloomOverlay(pasteboard: pasteboard)
         self.activate = activate
         self.permissions = permissions
         microphoneAuthorization = permissions.microphoneAuthorization()

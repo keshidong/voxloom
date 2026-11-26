@@ -4,43 +4,90 @@ import SpeechFoundation
 public struct QwenVoiceActivityConfiguration: Sendable {
     public let executable: URL
     public let model: URL
+    public let workerExecutable: URL?
 
-    public init(executable: URL, model: URL) {
+    public init(executable: URL, model: URL, workerExecutable: URL? = nil) {
         self.executable = executable
         self.model = model
+        self.workerExecutable = workerExecutable
     }
 }
 
-struct QwenVoiceActivity {
-    let configuration: QwenVoiceActivityConfiguration
+actor QwenVoiceActivity {
+    private let configuration: QwenVoiceActivityConfiguration
+    private var worker: JSONLineWorker?
+
+    init(configuration: QwenVoiceActivityConfiguration) { self.configuration = configuration }
+
+    func prepare() async {
+        guard !Task.isCancelled, worker == nil, let candidate = residentWorker() else { return }
+        do { try await candidate.prepare(within: .seconds(8)) }
+        catch { await discard(candidate) }
+    }
+
+    func shutdown() async {
+        if let worker { await discard(worker) }
+    }
 
     /// Returns nil when the optional detector cannot make a decision.
     func detectsSpeech(_ audio: AudioClip, in directory: URL) async throws -> Bool? {
-        let executable = configuration.executable
         let model = configuration.model
-        guard executable.isFileURL, model.isFileURL,
-              FileManager.default.isExecutableFile(atPath: executable.path),
-              FileManager.default.isReadableFile(atPath: model.path)
-        else { return nil }
-
+        guard model.isFileURL, FileManager.default.isReadableFile(atPath: model.path) else { return nil }
         let input = directory.appendingPathComponent("voice-activity.wav")
-        let output = directory.appendingPathComponent("voice-activity.txt")
         do {
             try WAVCodec.encode(normalizedForDetection(audio)).write(to: input)
-            try Data().write(to: output)
-            let runner = DeadlineCommandRunner(base: SystemCommandRunner(output: output), timeout: .seconds(3))
-            let status = try await runner.run(executable: executable, arguments: [
-                "--vad-model", model.path, "--file", input.path, "--threads", "1", "--no-prints",
-                "--vad-threshold", "0.5", "--vad-min-speech-duration-ms", "100"
-            ])
-            try Task.checkCancellation()
-            guard status == 0 else { return nil }
-            return try readDecision(at: output)
+            if let worker = residentWorker() {
+                return try await detectWithWorker(worker, input: input)
+            }
+            return try await detectWithCommand(input: input, in: directory)
         } catch {
             try Task.checkCancellation()
             return nil
         }
     }
+
+    private func residentWorker() -> JSONLineWorker? {
+        if let worker { return worker }
+        guard let executable = configuration.workerExecutable, executable.isFileURL,
+              FileManager.default.isExecutableFile(atPath: executable.path), configuration.model.isFileURL,
+              FileManager.default.isReadableFile(atPath: configuration.model.path) else { return nil }
+        let candidate = JSONLineWorker(executable: executable, arguments: ["--model", configuration.model.path])
+        worker = candidate
+        return candidate
+    }
+
+    private func detectWithWorker(_ worker: JSONLineWorker, input: URL) async throws -> Bool {
+        do {
+            let request = try JSONEncoder().encode(["audio": input.path])
+            let reply = try await worker.request(request, within: .seconds(3))
+            return try JSONDecoder().decode(Detection.self, from: reply).speech
+        } catch {
+            await discard(worker)
+            throw error
+        }
+    }
+
+    private func discard(_ candidate: JSONLineWorker) async {
+        if worker === candidate { worker = nil }
+        await candidate.shutdown()
+    }
+
+    private func detectWithCommand(input: URL, in directory: URL) async throws -> Bool? {
+        let executable = configuration.executable
+        guard executable.isFileURL, FileManager.default.isExecutableFile(atPath: executable.path) else { return nil }
+        let output = directory.appendingPathComponent("voice-activity.txt")
+        try Data().write(to: output)
+        let runner = DeadlineCommandRunner(base: SystemCommandRunner(output: output), timeout: .seconds(3))
+        let status = try await runner.run(executable: executable, arguments: [
+            "--vad-model", configuration.model.path, "--file", input.path, "--threads", "1", "--no-prints",
+            "--vad-threshold", "0.5", "--vad-min-speech-duration-ms", "100"
+        ])
+        try Task.checkCancellation()
+        guard status == 0 else { return nil }
+        return try readDecision(at: output)
+    }
+
+    private struct Detection: Decodable { let speech: Bool }
 
     private func normalizedForDetection(_ audio: AudioClip) throws -> AudioClip {
         let scale = 32_768.0

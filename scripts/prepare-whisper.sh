@@ -40,8 +40,9 @@ if [ ! -d "$whisper_source" ]; then
     tar -xzf "$runtime_dir/whisper-source.tar.gz" -C "$runtime_dir"
 fi
 "$cmake_bin" -S "$whisper_source" -B "$runtime_dir/whisper-build" \
-    -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DGGML_METAL=ON -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0
-"$cmake_bin" --build "$runtime_dir/whisper-build" --config Release --target whisper-cli vad-speech-segments -j 4
+    -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DGGML_METAL=ON -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0 \
+    "-DCMAKE_PROJECT_whisper.cpp_INCLUDE=$project_root/scripts/vad-worker/target.cmake"
+"$cmake_bin" --build "$runtime_dir/whisper-build" --config Release --target whisper-cli vad-speech-segments voxloom-vad -j 4
 if [ "$model_name" = --runtime-only ]; then
     exit 0
 fi

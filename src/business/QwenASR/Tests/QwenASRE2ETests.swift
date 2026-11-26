@@ -18,7 +18,9 @@ private let voiceActivity = QwenVoiceActivityConfiguration(
     executable: bundleResources?.appendingPathComponent("vad-speech-segments")
         ?? root.appendingPathComponent(".runtime/whisper-build/bin/vad-speech-segments"),
     model: bundleResources?.appendingPathComponent("ggml-silero-v5.1.2.bin")
-        ?? root.appendingPathComponent("models/ggml-silero-v5.1.2.bin"))
+        ?? root.appendingPathComponent("models/ggml-silero-v5.1.2.bin"),
+    workerExecutable: bundleResources?.appendingPathComponent("voxloom-vad")
+        ?? root.appendingPathComponent(".runtime/whisper-build/bin/voxloom-vad"))
 private let hasVoiceActivity = FileManager.default.isExecutableFile(atPath: voiceActivity.executable.path)
     && FileManager.default.isReadableFile(atPath: voiceActivity.model.path)
 

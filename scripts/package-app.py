@@ -99,6 +99,7 @@ def main():
     }
     if standalone:
         source_files["vad-speech-segments"] = ROOT / ".runtime/whisper-build/bin/vad-speech-segments"
+        source_files["voxloom-vad"] = ROOT / ".runtime/whisper-build/bin/voxloom-vad"
     weights = (
         "ggml-tiny.bin", "ggml-base.bin", "ggml-silero-v5.1.2.bin", "ggml-large-v3-turbo-q5_0.bin",
         "Qwen3-4B-Instruct-2507-Q4_K_M.gguf",

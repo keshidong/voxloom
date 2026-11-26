@@ -84,8 +84,9 @@ enum VoiceBarSetup {
     private var keyboardRange: NSRange?
     private var openedByShortcut = false
 
-    init() {
+    init(pasteboard: NSPasteboard = .general) {
         super.init(window: panel)
+        editor.pasteboard = pasteboard
         build()
         panel.delegate = self
         textPanel.animationBehavior = .none
@@ -480,11 +481,33 @@ enum VoiceBarSetup {
 @MainActor final class PanelEditor: NSTextView {
     var onSubmit: (() -> Bool)?
     var onClearDraft: (() -> Bool)?
+    fileprivate var pasteboard = NSPasteboard.general
 
     override var needsPanelToBecomeKey: Bool { true }
 
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        handleClipboardShortcut(event) || super.performKeyEquivalent(with: event)
+    }
+
     override func keyDown(with event: NSEvent) {
-        if !handleDraftShortcut(event) { super.keyDown(with: event) }
+        if !handleClipboardShortcut(event), !handleDraftShortcut(event) { super.keyDown(with: event) }
+    }
+
+    private func handleClipboardShortcut(_ event: NSEvent) -> Bool {
+        guard event.type == .keyDown, window?.firstResponder === self, !isHiddenOrHasHiddenAncestor,
+              event.modifierFlags.intersection([.command, .shift, .control, .option, .function]) == .command
+        else { return false }
+        // The floating editor has no Edit menu to dispatch these key equivalents.
+        switch event.charactersIgnoringModifiers?.lowercased() {
+        case "c":
+            if isSelectable, selectedRange().length > 0 {
+                _ = writeSelection(to: pasteboard, types: writablePasteboardTypes)
+            }
+        case "v":
+            if isEditable { _ = readSelection(from: pasteboard) }
+        default: return false
+        }
+        return true
     }
 
     func handleDraftShortcut(_ event: NSEvent) -> Bool {
