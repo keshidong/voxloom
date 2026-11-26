@@ -30,8 +30,11 @@ struct LocalModelsTests {
         try writeExecutable("""
         #!/bin/sh
         test -s "$2" || exit 1
-        printf '%s\n' 'Detected 0 speech segments:'
-        """, to: root.appending(path: "vad-speech-segments"))
+        printf '%s\n' '{"ready":true}'
+        while IFS= read -r request; do
+            printf '%s\n' '{"speech":false}'
+        done
+        """, to: root.appending(path: "voxloom-vad"))
 
         let speechWeights = downloads.directory(for: "qwen").appending(path: "Qwen3-ASR-1.7B-4bit")
         try FileManager.default.createDirectory(at: speechWeights, withIntermediateDirectories: true)

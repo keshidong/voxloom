@@ -26,7 +26,42 @@ private final class ASRBoundary: JSONWorkerRunning, @unchecked Sendable {
 }
 
 struct QwenASRRecognizerTests {
-    @Test func shuttingDownCancelsVoiceActivityBeforeItCanStartRecognition() async throws {
+    @Test func preparationReusesTheResidentVoiceDetectorForSuccessiveTranscriptions() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = root.appendingPathComponent("model.safetensors")
+        try Data().write(to: model)
+        let detector = root.appendingPathComponent("vad-worker")
+        try """
+        #!/bin/sh
+        printf x >> "$0.starts"
+        printf '%s\\n' '{"ready":true}'
+        IFS= read -r request || exit 1
+        printf '%s\\n' '{"speech":true}'
+        while IFS= read -r request; do
+            printf '%s\\n' '{"speech":false}'
+        done
+        """.write(to: detector, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: detector.path)
+        let launches = detector.appendingPathExtension("starts")
+        let options = RecognitionOptions(language: .chinese, context: "图书卡 预付费 USD")
+        let audio = try AudioClip(samples: audibleTestSamples)
+        let boundary = ASRBoundary()
+        let provider = QwenASRRecognizer(configuration: .init(executable: URL(fileURLWithPath: "/usr/bin/true"),
+            model: root, voiceActivity: .init(executable: URL(fileURLWithPath: "/usr/bin/false"), model: model,
+                                             workerExecutable: detector)), temporaryDirectory: root, factory: { boundary })
+        await provider.prepare()
+        #expect((try? String(contentsOf: launches, encoding: .utf8)) == "x")
+        #expect(try await provider.transcribe(audio, options: options).text == "图书卡额度采用预付费模式")
+        #expect(try await provider.transcribe(audio, options: options).text.isEmpty)
+        #expect((try? String(contentsOf: launches, encoding: .utf8)) == "x")
+        #expect(boundary.calls == 1)
+        await provider.shutdown()
+    }
+
+    @Test(arguments: [false, true])
+    func shuttingDownCancelsVoiceActivityBeforeItCanStartRecognition(usesResidentWorker: Bool) async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -34,8 +69,9 @@ struct QwenASRRecognizerTests {
         let provider = try recognizerWithDetector(in: root, script: """
         #!/bin/sh
         touch "$0.started"
+        printf '%s\\n' '{"ready":true}'
         exec /bin/sleep 30
-        """, worker: worker)
+        """, worker: worker, usesResidentWorker: usesResidentWorker)
 
         let transcription = Task {
             try await provider.transcribe(AudioClip(samples: audibleTestSamples),
@@ -86,14 +122,16 @@ struct QwenASRRecognizerTests {
         await provider.shutdown()
     }
 
-    private func recognizerWithDetector(in root: URL, script: String, worker: ASRBoundary) throws -> QwenASRRecognizer {
+    private func recognizerWithDetector(in root: URL, script: String, worker: ASRBoundary,
+                                        usesResidentWorker: Bool = false) throws -> QwenASRRecognizer {
         let model = root.appendingPathComponent("model.safetensors")
         try Data().write(to: model)
         let detector = root.appendingPathComponent("vad")
         try Data(script.utf8).write(to: detector)
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: detector.path)
         return QwenASRRecognizer(configuration: .init(executable: URL(fileURLWithPath: "/usr/bin/true"), model: root,
-            voiceActivity: .init(executable: detector, model: model)), temporaryDirectory: root, factory: { worker })
+            voiceActivity: .init(executable: detector, model: model, workerExecutable: usesResidentWorker ? detector : nil)),
+            temporaryDirectory: root, factory: { worker })
     }
 
     @Test func backgroundPreparationReusesTheWorkerWithoutSubmittingAudio() async throws {

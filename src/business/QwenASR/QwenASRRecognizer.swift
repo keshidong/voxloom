@@ -19,6 +19,7 @@ public actor QwenASRRecognizer: SpeechRecognizer {
     let configuration: QwenASRConfiguration
     let factory: @Sendable () -> any JSONWorkerRunning
     let temporaryDirectory: URL
+    private let voiceActivity: QwenVoiceActivity?
     private var worker: (any JSONWorkerRunning)?
     private var preparation: Task<Void, Never>?
     private var voiceActivityTask: Task<Bool?, any Error>?
@@ -26,11 +27,13 @@ public actor QwenASRRecognizer: SpeechRecognizer {
     private var busy = false
     public init(configuration: QwenASRConfiguration) {
         self.configuration = configuration
+        voiceActivity = configuration.voiceActivity.map(QwenVoiceActivity.init(configuration:))
         factory = { JSONLineWorker(executable: configuration.executable, arguments: ["--model", configuration.model.path]) }
         temporaryDirectory = FileManager.default.temporaryDirectory
     }
     init(configuration: QwenASRConfiguration, temporaryDirectory: URL, factory: @escaping @Sendable () -> any JSONWorkerRunning) {
         self.configuration = configuration; self.temporaryDirectory = temporaryDirectory; self.factory = factory
+        voiceActivity = configuration.voiceActivity.map(QwenVoiceActivity.init(configuration:))
     }
     deinit { worker?.close() }
 
@@ -40,6 +43,7 @@ public actor QwenASRRecognizer: SpeechRecognizer {
               (try? validateResources()) != nil else { return }
         let candidate = factory()
         let preparation = Task { [self] in
+            async let detectorReady: Void = voiceActivity?.prepare() ?? ()
             do {
                 try await candidate.prepare(within: min(configuration.timeout, .seconds(30)))
                 try Task.checkCancellation()
@@ -47,6 +51,7 @@ public actor QwenASRRecognizer: SpeechRecognizer {
             } catch {
                 await candidate.shutdown()
             }
+            await detectorReady
             self.preparation = nil
         }
         self.preparation = preparation
@@ -84,14 +89,8 @@ public actor QwenASRRecognizer: SpeechRecognizer {
         if worker == nil { worker = factory() }
         let worker = worker!
         let payload = try JSONEncoder().encode(Request(audio: input.path, language: options.language.rawValue, context: options.context))
-        let timeout = configuration.timeout
         do {
-            let response = try await withThrowingTaskGroup(of: Data.self) { group in
-                group.addTask { try await worker.request(payload) }
-                group.addTask { try await Task.sleep(for: timeout); throw RecognitionError.timedOut }
-                defer { group.cancelAll() }
-                return try await group.next()!
-            }
+            let response = try await worker.request(payload, within: configuration.timeout)
             try Task.checkCancellation()
             guard let transcript = try? JSONDecoder().decode(Transcript.self, from: response), transcript.text.utf8.count <= 16_384
             else { throw RecognitionError.invalidResult }
@@ -104,8 +103,8 @@ public actor QwenASRRecognizer: SpeechRecognizer {
     }
 
     private func detectSpeech(_ audio: AudioClip, in job: URL) async throws -> Bool? {
-        guard let configuration = configuration.voiceActivity else { return nil }
-        let detection = Task { try await QwenVoiceActivity(configuration: configuration).detectsSpeech(audio, in: job) }
+        guard let voiceActivity else { return nil }
+        let detection = Task { try await voiceActivity.detectsSpeech(audio, in: job) }
         voiceActivityTask = detection
         defer { voiceActivityTask = nil }
         return try await withTaskCancellationHandler {
@@ -122,6 +121,7 @@ public actor QwenASRRecognizer: SpeechRecognizer {
         preparation?.cancel()
         _ = try? await detection?.value
         await preparation?.value
+        await voiceActivity?.shutdown()
         await worker?.shutdown()
         worker = nil
     }

@@ -164,6 +164,48 @@ import Testing
         await flow.shutdown()
     }
 
+    @Test func theFocusedDraftCopiesItsSelectionAndPastesThroughNativeKeyEvents() throws {
+        _ = NSApplication.shared
+        let board = NSPasteboard.withUniqueName()
+        defer { board.releaseGlobally() }
+        let overlay = VoxloomOverlay(pasteboard: board)
+        let editor = overlay.editor
+        editor.isEditable = true
+        editor.string = "示例草稿"
+        editor.setSelectedRange(NSRange(location: 2, length: 2))
+        overlay.showDraftEditor()
+        defer { overlay.panel.orderOut(nil) }
+        let window = try #require(editor.window)
+        try #require(window.firstResponder === editor)
+        var editedText: String?
+        overlay.onEdit = { text, _, _ in editedText = text }
+
+        func command(_ character: String, key: Int) throws -> NSEvent {
+            try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command,
+                timestamp: 0, windowNumber: window.windowNumber, context: nil,
+                characters: character, charactersIgnoringModifiers: character, isARepeat: false, keyCode: UInt16(key)))
+        }
+        let copy = try command("c", key: kVK_ANSI_C)
+        #expect(window.performKeyEquivalent(with: copy))
+        #expect(board.string(forType: .string) == "草稿")
+
+        board.clearContents()
+        try #require(board.setString("新词", forType: .string))
+        let paste = try command("v", key: kVK_ANSI_V)
+        window.sendEvent(paste)
+        #expect(editor.string == "示例新词")
+        #expect(editedText == "示例新词")
+        #expect(board.string(forType: .string) == "新词")
+
+        editor.isEditable = false
+        window.sendEvent(paste)
+        #expect(editor.string == "示例新词")
+
+        try #require(window.makeFirstResponder(nil))
+        #expect(!window.performKeyEquivalent(with: copy))
+        #expect(board.string(forType: .string) == "新词")
+    }
+
     @Test func enterSubmitsTheDraftAndShiftEnterKeepsEditing() throws {
         _ = NSApplication.shared
         let overlay = VoxloomOverlay()

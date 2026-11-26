@@ -21,6 +21,15 @@ extension JSONWorkerRunning {
             try await group.next()
         }
     }
+
+    func request(_ data: Data, within timeout: Duration) async throws -> Data {
+        try await withThrowingTaskGroup(of: Data.self) { group in
+            group.addTask { try await self.request(data) }
+            group.addTask { try await Task.sleep(for: timeout); throw RecognitionError.timedOut }
+            defer { group.cancelAll() }
+            return try await group.next()!
+        }
+    }
 }
 
 /// Private stdin/stdout RPC. One owned process, serialized requests, bounded frames.

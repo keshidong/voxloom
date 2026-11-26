@@ -13,7 +13,7 @@ public struct LiveState: Sendable, Equatable {
     public var busy = false
     public var hasVoice = false
     fileprivate var submissionIsFinal = false
-    fileprivate var previewFailed = false
+    fileprivate var consecutivePreviewFailures = 0
     public init() {}
     public var seconds: Double { Double(samples.count) / Double(AudioClip.sampleRate) }
 }
@@ -53,7 +53,9 @@ public enum LiveReducer {
         var effects: [LiveEffect] = []
         func submit() {
             let isFinal = state.phase == .finishing
-            guard !state.busy, state.hasVoice, !state.samples.isEmpty, isFinal || !state.previewFailed else { return }
+            // One retry on new audio recovers transient preview errors without restarting a broken worker indefinitely.
+            guard !state.busy, state.hasVoice, !state.samples.isEmpty,
+                  isFinal || state.consecutivePreviewFailures < 2 else { return }
             state.busy = true
             state.submissionIsFinal = isFinal
             state.submitted = state.samples.count
@@ -83,12 +85,16 @@ public enum LiveReducer {
             state.level = samples.isEmpty ? 0 : sqrt(samples.reduce(0.0) { $0 + pow(Double($1) / 32768, 2) } / Double(samples.count))
             state.hasVoice = state.hasVoice || state.level > 0.002
             if state.samples.count == AudioClip.maximumSamples { finish() }
-            else if recognizesWhileRecording && state.submitted == 0 && state.samples.count >= firstPreviewSamples { submit() }
+            else if recognizesWhileRecording, state.text.isEmpty {
+                let minimumNewSamples = state.submitted == 0 ? firstPreviewSamples : refreshSamples
+                if state.samples.count - state.submitted >= minimumNewSamples { submit() }
+            }
         case .pulse where state.phase == .recording:
             if recognizesWhileRecording && state.submitted > 0 && state.samples.count - state.submitted >= refreshSamples { submit() }
         case .result(let session, let revision, let text) where session == state.session && state.busy && revision == state.submitted:
             state.text = text
             state.busy = false
+            state.consecutivePreviewFailures = 0
             if state.phase == .finishing {
                 if state.submitted == state.samples.count && (!requiresFinalRecognition || state.submissionIsFinal) {
                     state.phase = .idle
@@ -97,9 +103,9 @@ public enum LiveReducer {
             } else if state.samples.count - state.submitted >= refreshSamples { submit() }
         case .previewFailed(let session, let revision)
             where session == state.session && state.busy && revision == state.submitted && !state.submissionIsFinal:
-            state.previewFailed = true
+            state.consecutivePreviewFailures += 1
             state.busy = false
-            if state.phase == .finishing { submit() }
+            if state.phase == .finishing || state.samples.count - state.submitted >= refreshSamples { submit() }
         case .stop where state.phase == .recording:
             finish()
         case .failed(let session, let message) where session == state.session && state.phase != .idle:

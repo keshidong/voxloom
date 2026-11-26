@@ -38,6 +38,12 @@ Silero v5.1.2 使用 0.5 判定阈值和 100 毫秒最短语音。检测用的 P
 
 本机 Release 构建每种时长交替测量 20 次。固定识别工作进程的开销后，1 秒和 4.2 秒语音的检测增量中位数分别为 47.9 和 53.7 毫秒，p95 分别为 56.5 和 62.2 毫秒。一个 2 秒键盘噪声样本返回空文本的中位数为 50.3 毫秒，p95 为 55.4 毫秒。
 
+## 常驻语音检测进程
+
+Voxloom 在 Qwen 模型预热时并行加载本地 Silero。后续录音在同一辅助进程中逐段检测，使用同一份权重和检测参数。分离前的音量检查用于跳过明显静音，分离后的 Silero 用于判断输出中是否还有语音。
+
+本机用同一个 1.5 秒公开语音前缀分别测 40 次。每段启动辅助进程时，检测耗时中位数为 40.45 毫秒，最长为 4,950 毫秒。常驻进程就绪后，中位数为 1.83 毫秒，最长为 4.59 毫秒。这些数字只计检测请求，音频采集、声纹分离、Qwen 解码和进程预热另计。
+
 ## 回归命令
 
 普通 Swift 测试包含合成嗡声、风扇和宽带噪声，离线运行即可。旧实现对三类均尝试启动识别引擎，新规则返回空结果。
@@ -46,6 +52,7 @@ Silero v5.1.2 使用 0.5 判定阈值和 100 毫秒最短语音。检测用的 P
 bash scripts/swift-command.sh test --no-parallel --filter QwenASRRecognizerTests
 
 bash scripts/prepare-whisper.sh silero-v5.1.2
+python3 -B scripts/vad-worker/test_worker.py
 python3 scripts/prepare-qwen-noise-fixtures.py
 fixtures="$PWD/.build/reports/qwen-noise-fixtures"
 say -v Meijia --file-format=WAVE --data-format=LEI16@16000 -o "$fixtures/short-ack.wav" '嗯。'
