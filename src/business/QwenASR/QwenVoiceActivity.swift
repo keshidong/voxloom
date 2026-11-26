@@ -16,12 +16,13 @@ public struct QwenVoiceActivityConfiguration: Sendable {
 actor QwenVoiceActivity {
     private let configuration: QwenVoiceActivityConfiguration
     private var worker: JSONLineWorker?
+    private var workerIsReady = false
 
     init(configuration: QwenVoiceActivityConfiguration) { self.configuration = configuration }
 
     func prepare() async {
         guard !Task.isCancelled, worker == nil, let candidate = residentWorker() else { return }
-        do { try await candidate.prepare(within: .seconds(8)) }
+        do { try await waitUntilReady(candidate) }
         catch { await discard(candidate) }
     }
 
@@ -58,6 +59,7 @@ actor QwenVoiceActivity {
 
     private func detectWithWorker(_ worker: JSONLineWorker, input: URL) async throws -> Bool {
         do {
+            try await waitUntilReady(worker)
             let request = try JSONEncoder().encode(["audio": input.path])
             let reply = try await worker.request(request, within: .seconds(3))
             return try JSONDecoder().decode(Detection.self, from: reply).speech
@@ -67,8 +69,18 @@ actor QwenVoiceActivity {
         }
     }
 
+    private func waitUntilReady(_ candidate: JSONLineWorker) async throws {
+        guard !workerIsReady else { return }
+        // Model startup has its own deadline so it does not consume the detection budget.
+        try await candidate.prepare(within: .seconds(8))
+        if worker === candidate { workerIsReady = true }
+    }
+
     private func discard(_ candidate: JSONLineWorker) async {
-        if worker === candidate { worker = nil }
+        if worker === candidate {
+            worker = nil
+            workerIsReady = false
+        }
         await candidate.shutdown()
     }
 
@@ -101,8 +113,39 @@ actor QwenVoiceActivity {
         guard peak > 0 else { return audio }
         let rms = sqrt(squares / Double(audio.samples.count))
         let gain = min(16, scale * 0.03 / rms, scale * 0.98 / peak)
-        guard gain > 1 else { return audio }
+        guard gain > 1, hasSustainedLevelContrast(audio.samples) else { return audio }
         return try AudioClip(samples: audio.samples.map { Int16((Double($0) * gain).rounded()) })
+    }
+
+    private func hasSustainedLevelContrast(_ samples: [Int16]) -> Bool {
+        let frameSize = AudioClip.sampleRate / 50  // 20 ms
+        let windowSize = 5  // 100 ms
+        let frameCount = samples.count / frameSize
+        guard frameCount >= windowSize else { return false }
+        let powers = (0..<frameCount).map { frame -> Double in
+            let start = frame * frameSize
+            var sum = 0.0
+            var squares = 0.0
+            for sample in samples[start..<(start + frameSize)] {
+                let value = Double(sample)
+                sum += value
+                squares += value * value
+            }
+            let mean = sum / Double(frameSize)
+            return squares / Double(frameSize) - mean * mean
+        }
+        // Estimate the noise floor from quiet frames. A few loud samples should
+        // not make a detector amplify the entire recording of a quiet room.
+        let noiseFloor = powers.sorted()[frameCount / 5]
+        let threshold = 6.25 * noiseFloor  // 2.5× in RMS
+        let aboveFloor = powers.map { $0 > threshold }
+        var active = 0
+        for index in aboveFloor.indices {
+            if aboveFloor[index] { active += 1 }
+            if index >= windowSize, aboveFloor[index - windowSize] { active -= 1 }
+            if index >= windowSize - 1, active >= 3 { return true }
+        }
+        return false
     }
 
     private func readDecision(at output: URL) throws -> Bool? {

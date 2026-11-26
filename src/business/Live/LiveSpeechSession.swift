@@ -32,6 +32,7 @@ public extension AudioCapturing {
     private var clock: (any Disposable)?
     private var recognizer: (any SpeechRecognizer)?
     private var options = RecognitionOptions()
+    private var transcribedPreviewSamples = 0
     public var states: Observable<LiveState> { output.asObservable() }
     public var sourceDescription: String { capture.sourceDescription }
 
@@ -44,11 +45,13 @@ public extension AudioCapturing {
         self.ownsRecognizer = ownsRecognizer
         self.prepareFinalAudio = prepareFinalAudio
         self.preparePreviewAudio = preparePreviewAudio
+        let preparesPreviewAudio = preparePreviewAudio != nil
         input.observe(on: MainScheduler.asyncInstance)
             .scan(LiveReducer.reduce(LiveState(), .pulse)) { previous, event in
                 LiveReducer.reduce(previous.state, event,
-                    recognizesWhileRecording: prepareFinalAudio == nil || preparePreviewAudio != nil,
-                    requiresFinalRecognition: preparePreviewAudio != nil)
+                    recognizesWhileRecording: prepareFinalAudio == nil || preparesPreviewAudio,
+                    requiresFinalRecognition: preparesPreviewAudio,
+                    usesShortPreviewCadence: preparesPreviewAudio)
             }.subscribe(onNext: { [weak self] transition in
                 guard let self else { return }
                 state = transition.state
@@ -93,6 +96,7 @@ public extension AudioCapturing {
                 }
             }
         case .capture(let id):
+            transcribedPreviewSamples = 0
             do {
                 try capture.start(samples: { [weak self] samples in
                     DispatchQueue.main.async { [weak self] in self?.input.onNext(.audio(id, samples)) }
@@ -111,15 +115,27 @@ public extension AudioCapturing {
         case .recognize(let id, let samples):
             guard let recognizer else { return }
             let options = options
-            let isIsolatedPreview = state.phase == .recording && preparePreviewAudio != nil
-            let prepareAudio = state.phase == .finishing ? prepareFinalAudio : preparePreviewAudio
+            let isPreview = state.phase == .recording
+            let isIsolatedPreview = isPreview && preparePreviewAudio != nil
+            let previewOffset = transcribedPreviewSamples
+            let prepareAudio = isPreview ? preparePreviewAudio : prepareFinalAudio
             recognition = Task { [weak self] in
                 do {
                     let inputAudio = try AudioClip(samples: samples)
                     let audio = try await prepareAudio?(inputAudio) ?? inputAudio
                     try Task.checkCancellation()
-                    let text = audio.samples.isEmpty ? "" : try await recognizer.transcribe(audio, options: options).text
-                    self?.input.onNext(.result(id, samples.count, text))
+                    let text: String
+                    if audio.samples.isEmpty {
+                        text = ""
+                    } else if isPreview {
+                        text = try await recognizer.transcribePreview(audio, after: min(previewOffset, audio.samples.count),
+                                                                      options: options).text
+                    } else {
+                        text = try await recognizer.transcribe(audio, options: options).text
+                    }
+                    guard let self, state.session == id, state.busy, state.submitted == samples.count else { return }
+                    if isPreview, !text.isEmpty { transcribedPreviewSamples = audio.samples.count }
+                    input.onNext(.result(id, samples.count, text))
                 } catch is CancellationError {} catch {
                     self?.input.onNext(isIsolatedPreview ? .previewFailed(id, samples.count) : .failed(id, "识别失败：\(error)"))
                 }

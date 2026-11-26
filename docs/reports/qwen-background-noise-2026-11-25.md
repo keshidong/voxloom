@@ -63,3 +63,24 @@ bash scripts/swift-command.sh test --no-parallel \
 ```
 
 真实推理复用项目现有的本地 Qwen 运行时和权重。已有全量语音目录时，可通过 `VOXLOOM_QWEN_SPEECH_FIXTURES` 指向那 1,965 个 16 kHz PCM16 WAV，运行 `backgroundGateKeepsTheFullPublicSpeechCorpus` 检查每个原本放行的文件。
+
+## 录屏里的环境底噪和点击声
+
+将同一录屏的音轨转换为 16 kHz、单声道 PCM16。25.80–27.05 秒避开明显点击声，5.90–7.90 秒保留点击声。两个片段通过原有的能量门槛和增益后的 Silero，Qwen 在自动语言且词汇提示为空时均输出「嗯。」。
+
+检测输入以 20 毫秒为一帧。按帧功率的第 20 百分位估计底噪，只有 100 毫秒内至少 3 帧的 RMS 超过底噪的 2.5 倍，才应用原来的增益。Silero 对其余片段使用原量级，Qwen 仍使用原录音。这个条件可保留长静音里短促的发声，并防止一个瞬时峰值把整段底噪抬高。
+
+| A/B 数据 | 原增益通过语音检测 | 修改后通过语音检测 |
+| --- | ---: | ---: |
+| 录屏 27.2 秒前、通过原能量门槛的 1,328 个重叠窗口 | 576 | 0 |
+| 1,965 段公开语音，原音量 | 1,950 | 1,950 |
+| 同一批公开语音，幅值降至 1/8 | 1,531 | 1,531 |
+
+录屏窗口长 0.65–5 秒，每 100 毫秒移动一次。公开语音逐条比较放行决定，普通话、英语和中英文混说三组均无变化。通过真实 Qwen 接口回放，两个原始误转写片段及 62 个 MS-SNSD 噪声片段均返回空文本，约 0.29 秒的发声「嗯」仍可识别。
+
+回放音频留在本地。将两个切片命名为 `room-tone.wav`、`near-click.wav`，放在同一目录运行下列测试。普通模块测试另有合成底噪加点击声的用例。
+
+```bash
+VOXLOOM_QWEN_ROOM_TONE_FIXTURES=/path/to/local/replay \
+bash scripts/swift-command.sh test -c release --no-parallel --filter realRoomToneDoesNotProduceATranscript
+```

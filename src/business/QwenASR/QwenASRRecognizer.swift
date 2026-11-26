@@ -59,10 +59,21 @@ public actor QwenASRRecognizer: SpeechRecognizer {
     }
 
     public func transcribe(_ audio: AudioClip, options: RecognitionOptions) async throws -> Transcript {
+        try await transcribe(audio, options: options, newSpeechStartsAt: nil)
+    }
+
+    public func transcribePreview(_ audio: AudioClip, after sampleOffset: Int, options: RecognitionOptions) async throws -> Transcript {
+        try await transcribe(audio, options: options, newSpeechStartsAt: sampleOffset)
+    }
+
+    private func transcribe(_ audio: AudioClip, options: RecognitionOptions, newSpeechStartsAt: Int?) async throws -> Transcript {
         try Task.checkCancellation()
         guard !busy else { throw RecognitionError.busy }
         guard !audio.samples.isEmpty else { throw RecognitionError.emptyAudio }
-        guard Self.containsSustainedAudio(audio.samples) else { return Transcript(text: "") }
+        let offset = newSpeechStartsAt ?? 0
+        guard (0...audio.samples.count).contains(offset) else { throw RecognitionError.invalidConfiguration }
+        let audioToCheck = offset == 0 ? audio : try AudioClip(samples: Array(audio.samples.dropFirst(offset)))
+        guard Self.containsSustainedAudio(audioToCheck.samples) else { return Transcript(text: "") }
         guard options.context.utf8.count <= 4096 else { throw RecognitionError.invalidConfiguration }
         try validateResources()
         busy = true
@@ -72,10 +83,10 @@ public actor QwenASRRecognizer: SpeechRecognizer {
         do { try FileManager.default.createDirectory(at: job, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700]) }
         catch { throw RecognitionError.fileAccess }
         defer { try? FileManager.default.removeItem(at: job) }
-        let speech = try await detectSpeech(audio, in: job)
+        let speech = try await detectSpeech(audioToCheck, in: job)
         try Task.checkCancellation()
         guard generation == self.generation else { throw CancellationError() }
-        if speech == false {
+        if speech == false || (offset > 0 && voiceActivity != nil && speech == nil) {
             return Transcript(text: "")
         }
         await preparation?.value
