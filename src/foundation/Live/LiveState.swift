@@ -14,6 +14,7 @@ public struct LiveState: Sendable, Equatable {
     public var hasVoice = false
     fileprivate var submissionIsFinal = false
     fileprivate var consecutivePreviewFailures = 0
+    fileprivate var latestVoiceSample = 0
     public init() {}
     public var seconds: Double { Double(samples.count) / Double(AudioClip.sampleRate) }
 }
@@ -65,7 +66,8 @@ public enum LiveReducer {
             effects.append(.recognize(state.session, state.samples))
         }
         func submitPreviewIfReady() {
-            guard recognizesWhileRecording, state.phase == .recording else { return }
+            guard recognizesWhileRecording, state.phase == .recording,
+                  state.latestVoiceSample > state.submitted else { return }
             let minimumNewSamples: Int
             if state.submitted == 0 { minimumNewSamples = firstPreviewSamples }
             else if state.text.isEmpty { minimumNewSamples = emptyPreviewRefreshSamples }
@@ -95,12 +97,13 @@ public enum LiveReducer {
             state.samples.append(contentsOf: samples.prefix(AudioClip.maximumSamples - state.samples.count))
             state.level = samples.isEmpty ? 0 : sqrt(samples.reduce(0.0) { $0 + pow(Double($1) / 32768, 2) } / Double(samples.count))
             state.hasVoice = state.hasVoice || state.level > 0.002
+            if state.level > 0.001 { state.latestVoiceSample = state.samples.count }
             if state.samples.count == AudioClip.maximumSamples { finish() }
             else { submitPreviewIfReady() }
         case .pulse where state.phase == .recording:
             if state.submitted > 0 { submitPreviewIfReady() }
         case .result(let session, let revision, let text) where session == state.session && state.busy && revision == state.submitted:
-            state.text = text
+            if state.submissionIsFinal || !text.isEmpty { state.text = text }
             state.busy = false
             state.consecutivePreviewFailures = 0
             if state.phase == .finishing {

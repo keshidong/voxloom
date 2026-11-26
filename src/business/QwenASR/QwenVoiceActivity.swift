@@ -16,12 +16,13 @@ public struct QwenVoiceActivityConfiguration: Sendable {
 actor QwenVoiceActivity {
     private let configuration: QwenVoiceActivityConfiguration
     private var worker: JSONLineWorker?
+    private var workerIsReady = false
 
     init(configuration: QwenVoiceActivityConfiguration) { self.configuration = configuration }
 
     func prepare() async {
         guard !Task.isCancelled, worker == nil, let candidate = residentWorker() else { return }
-        do { try await candidate.prepare(within: .seconds(8)) }
+        do { try await waitUntilReady(candidate) }
         catch { await discard(candidate) }
     }
 
@@ -58,6 +59,7 @@ actor QwenVoiceActivity {
 
     private func detectWithWorker(_ worker: JSONLineWorker, input: URL) async throws -> Bool {
         do {
+            try await waitUntilReady(worker)
             let request = try JSONEncoder().encode(["audio": input.path])
             let reply = try await worker.request(request, within: .seconds(3))
             return try JSONDecoder().decode(Detection.self, from: reply).speech
@@ -67,8 +69,18 @@ actor QwenVoiceActivity {
         }
     }
 
+    private func waitUntilReady(_ candidate: JSONLineWorker) async throws {
+        guard !workerIsReady else { return }
+        // Model startup has its own deadline so it does not consume the detection budget.
+        try await candidate.prepare(within: .seconds(8))
+        if worker === candidate { workerIsReady = true }
+    }
+
     private func discard(_ candidate: JSONLineWorker) async {
-        if worker === candidate { worker = nil }
+        if worker === candidate {
+            worker = nil
+            workerIsReady = false
+        }
         await candidate.shutdown()
     }
 

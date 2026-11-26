@@ -112,6 +112,33 @@ actor FixedRecognizer: SpeechRecognizer {
         await session.shutdown()
     }
 
+    @Test func filteredPreviewChecksFreshAudioAndKeepsItsTextDuringBackground() async throws {
+        let capture = FakeCapture()
+        let recognizer = PreviewRecorder()
+        let lag = 384
+        let initial = [Int16](repeating: 1000, count: AudioClip.sampleRate * 3 / 4)
+        let additional = [Int16](repeating: 1000, count: AudioClip.sampleRate / 2)
+        let live = LiveSpeechSession(capture: capture, prepareFinalAudio: { $0 },
+                                     preparePreviewAudio: { try AudioClip(samples: Array($0.samples.dropLast(lag))) })
+        live.start(recognizer: recognizer)
+        try await waitUntil { live.state.phase == .recording }
+        capture.sink?(initial)
+        try await waitUntil { !live.state.busy && live.state.submitted == initial.count }
+        #expect(live.state.text == "第一句")
+        capture.sink?(additional)
+        try await waitUntil { !live.state.busy && live.state.submitted == initial.count + additional.count }
+        #expect(live.state.text == "第一句")
+        capture.sink?(additional)
+        try await waitUntil { !live.state.busy && live.state.submitted == initial.count + 2 * additional.count }
+        #expect(live.state.text == "第一句。第二句")
+        let visiblePrefix = initial.count - lag
+        #expect(await recognizer.offsets == [0, visiblePrefix, visiblePrefix])
+        live.stop()
+        try await waitUntil { live.state.phase == .idle }
+        #expect(live.state.text == "最终结果")
+        await live.shutdown()
+    }
+
     @Test(arguments: [true, false])
     func stoppingASessionClosesOnlyTheRecognizerItOwns(ownsRecognizer: Bool) async throws {
         let recognizer = FixedRecognizer()
@@ -183,5 +210,18 @@ private actor AudioRecorder: SpeechRecognizer {
     func transcribe(_ audio: AudioClip, options: RecognitionOptions) async throws -> Transcript {
         clips.append(audio.samples)
         return Transcript(text: "voice")
+    }
+}
+
+private actor PreviewRecorder: SpeechRecognizer {
+    private(set) var offsets: [Int] = []
+
+    func transcribePreview(_ audio: AudioClip, after sampleOffset: Int, options: RecognitionOptions) async throws -> Transcript {
+        offsets.append(sampleOffset)
+        return Transcript(text: ["第一句", "", "第一句。第二句"][offsets.count - 1])
+    }
+
+    func transcribe(_ audio: AudioClip, options: RecognitionOptions) async throws -> Transcript {
+        Transcript(text: "最终结果")
     }
 }

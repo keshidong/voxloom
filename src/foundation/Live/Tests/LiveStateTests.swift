@@ -94,6 +94,46 @@ struct LiveStateTests {
         #expect(refreshesImmediately)
     }
 
+    @Test func keepingTheRecordingOpenDuringSilenceDoesNotRefreshTheDraft() {
+        let sampleRate = AudioClip.sampleRate
+        let speech = [Int16](repeating: 1000, count: sampleRate)
+        let silence = [Int16](repeating: 0, count: sampleRate / 2)
+        var state = LiveState()
+        func send(_ event: LiveEvent) -> LiveTransition {
+            let next = LiveReducer.reduce(state, event)
+            state = next.state
+            return next
+        }
+        _ = send(.start)
+        _ = send(.ready(1))
+        _ = send(.audio(1, speech))
+        _ = send(.result(1, speech.count, "第一句"))
+        for _ in 0..<3 {
+            #expect(send(.audio(1, silence)).effects.isEmpty)
+            #expect(send(.pulse).effects.isEmpty)
+        }
+        #expect(state.text == "第一句")
+        #expect(!state.busy)
+        let resumes = send(.audio(1, Array(repeating: 48, count: sampleRate / 10)))
+        let submittedOnNewVoice = resumes.effects == [.recognize(1, resumes.state.samples)]
+        #expect(submittedOnNewVoice)
+    }
+
+    @Test func anEmptyPreviewKeepsTheDraftVisibleUntilTheFinalResult() {
+        let speech = [Int16](repeating: 1000, count: AudioClip.sampleRate)
+        let extra = Array(speech.prefix(AudioClip.sampleRate / 2))
+        var state = LiveState()
+        for event in [LiveEvent.start, .ready(1), .audio(1, speech), .result(1, speech.count, "第一句"),
+                      .audio(1, extra), .result(1, speech.count + extra.count, "")] {
+            state = LiveReducer.reduce(state, event, requiresFinalRecognition: true).state
+        }
+        #expect(state.text == "第一句")
+        state = LiveReducer.reduce(state, .stop, requiresFinalRecognition: true).state
+        state = LiveReducer.reduce(state, .result(1, state.samples.count, ""), requiresFinalRecognition: true).state
+        #expect(state.phase == .idle)
+        #expect(state.text.isEmpty)
+    }
+
     @Test func filteredPreviewStartsAt750MillisecondsAndRetriesAfter250MillisecondsUntilTextAppears() {
         let firstSize = AudioClip.sampleRate * 3 / 4
         let retrySize = AudioClip.sampleRate / 4

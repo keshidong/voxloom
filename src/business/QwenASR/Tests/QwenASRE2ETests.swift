@@ -45,6 +45,34 @@ private let hasVoiceActivity = FileManager.default.isExecutableFile(atPath: voic
         await recognizer.shutdown()
     }
 
+    @Test(.enabled(if: roomToneFixtures != nil && shortAcknowledgement != nil,
+                   "Set the local room tone and short acknowledgement fixtures"))
+    func realPreviewOnlyRefreshesWhenNewSpeechArrives() async throws {
+        try #require(hasVoiceActivity)
+        let directory = URL(fileURLWithPath: try #require(roomToneFixtures))
+        let background = try WAVCodec.decode(Data(contentsOf: directory.appendingPathComponent("room-tone.wav")))
+        let first = try WAVCodec.decode(Data(contentsOf: chineseAudio))
+        let continuation = try WAVCodec.decode(Data(contentsOf: URL(fileURLWithPath: try #require(shortAcknowledgement))))
+        let quietPause = try AudioClip(samples: first.samples + background.samples)
+        let resumed = try AudioClip(samples: quietPause.samples + continuation.samples)
+        let options = RecognitionOptions(language: .chinese)
+        let recognizer = QwenASRRecognizer(configuration: .init(executable: asrExecutable, model: asrModel,
+                                                               voiceActivity: voiceActivity))
+        await recognizer.prepare()
+        do {
+            let initial = try await recognizer.transcribePreview(first, after: 0, options: options)
+            #expect(initial.text.contains("交易几乎停滞"))
+            let paused = try await recognizer.transcribePreview(quietPause, after: first.samples.count, options: options)
+            #expect(paused.text.isEmpty)
+            let next = try await recognizer.transcribePreview(resumed, after: first.samples.count, options: options)
+            #expect(next.text.contains("交易几乎停滞"))
+        } catch {
+            await recognizer.shutdown()
+            throw error
+        }
+        await recognizer.shutdown()
+    }
+
     @Test(.enabled(if: noiseFixtures != nil, "Run scripts/prepare-qwen-noise-fixtures.py first"),
           arguments: ["public-noise-48dBFS", "public-noise-38dBFS"])
     func realBackgroundNoiseDoesNotRegainFalseTranscripts(level: String) async throws {
