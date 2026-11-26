@@ -6,6 +6,8 @@ import SpeechInput
 @MainActor final class VoxloomFlow {
     static let insertionSentNotice = "已发送插入请求"
 
+    enum RecordingSource { case keyboard, mouse }
+
     private typealias CapturedTarget = Result<CaretInsertion.Destination, Error>
 
     private enum InsertionRequest {
@@ -13,6 +15,7 @@ import SpeechInput
         case automatic(CapturedTarget)
     }
     private struct HeldRecording {
+        let source: RecordingSource
         let target: CapturedTarget
         let appendsToDraft: Bool
         var opensEditor = false
@@ -76,7 +79,7 @@ import SpeechInput
         self.recognitionAvailable = recognitionAvailable
     }
 
-    func handle(_ action: FunctionKeyGesture.Action) {
+    func handle(_ action: FunctionKeyGesture.Action, from source: RecordingSource = .keyboard) {
         switch action {
         case .start:
             guard canStart else { return }
@@ -84,22 +87,22 @@ import SpeechInput
                 showNotice("转写模型尚未就绪，请在设置中查看下载进度")
                 return
             }
-            begin(capture())
-        case .stop: stopRecording(automatic: true)
-        case .interrupted: stopRecording(automatic: false)
+            begin(capture(), from: source)
+        case .stop: stopRecording(from: source, automatic: true)
+        case .interrupted: stopRecording(from: source, automatic: false)
         case .confirm: insertDraft()
         }
     }
 
     func requestRecordingEdit() -> Bool {
-        guard heldRecording != nil else { return false }
+        guard heldRecording?.source == .keyboard else { return false }
         heldRecording?.opensEditor = true
         onChange?()
         return true
     }
 
     func cancelHeldRecording() -> Bool {
-        guard heldRecording != nil else { return false }
+        guard heldRecording?.source == .keyboard else { return false }
         clearOrCancel(notice: "本轮已取消，松开 \(settings.trigger.name) 后可重录")
         return true
     }
@@ -157,7 +160,7 @@ import SpeechInput
         await releaseRecognizer()
     }
 
-    private func begin(_ audio: any AudioCapturing) {
+    private func begin(_ audio: any AudioCapturing, from source: RecordingSource) {
         let previous = session
         let selected = settings
         let voiceIsolation: VoiceIsolationPreparation?
@@ -176,8 +179,8 @@ import SpeechInput
         didSendInsertion = false
         insertionRequest = nil
         if existingText.isEmpty { editedTarget = nil }
-        heldRecording = HeldRecording(target: Result { try insertion.destination(requireFocusedInput: true) },
-                                     appendsToDraft: !existingText.isEmpty)
+        let target = Result { try insertion.destination(requireFocusedInput: true) }
+        heldRecording = HeldRecording(source: source, target: target, appendsToDraft: !existingText.isEmpty)
         observation?.dispose()
         session = next
         observation = next.states.subscribe(onNext: { [weak self] _ in self?.refresh() })
@@ -215,8 +218,8 @@ import SpeechInput
         await preparation?.value
     }
 
-    private func stopRecording(automatic: Bool) {
-        guard let recording = heldRecording, let session else { return }
+    private func stopRecording(from source: RecordingSource, automatic: Bool) {
+        guard let recording = heldRecording, recording.source == source, let session else { return }
         heldRecording = nil
         let opensEditor = automatic && recording.opensEditor
         if opensEditor { editedTarget = recording.target }

@@ -3,7 +3,7 @@ import Carbon
 import SpeechFoundation
 import RxSwift
 
-/// Interprets modifier transitions independently of the event source.
+/// Interprets press and release transitions for dictation independently of the event source.
 @MainActor final class DictationKeyInput {
     enum RecordingShortcut: Equatable { case edit, cancel }
 
