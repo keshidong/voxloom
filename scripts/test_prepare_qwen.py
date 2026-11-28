@@ -51,6 +51,12 @@ class QwenRuntimePreparationTest(unittest.TestCase):
             self.assertEqual(install.kwargs["env"]["MACOSX_DEPLOYMENT_TARGET"], "14.0")
             builds = [call for call in commands.call_args_list if call.args[1:2] == ("--build",)]
             self.assertTrue(any("llama-mtmd-cli" in call.args for call in builds))
+            self.assertTrue(any("llama-server" in call.args for call in builds))
+            configures = [call for call in commands.call_args_list if call.args[1:2] == ("-S",)]
+            self.assertTrue(configures)
+            for configure in configures:
+                self.assertIn("-DLLAMA_USE_PREBUILT_UI=OFF", configure.args)
+                self.assertIn("-DLLAMA_BUILD_UI=OFF", configure.args)
 
 
 if __name__ == "__main__":
