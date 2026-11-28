@@ -15,6 +15,7 @@ private let corpusPath = ProcessInfo.processInfo.environment["VOXLOOM_CORRECTION
 private let noiseFixtures = ProcessInfo.processInfo.environment["VOXLOOM_QWEN_NOISE_FIXTURES"]
 private let roomToneFixtures = ProcessInfo.processInfo.environment["VOXLOOM_QWEN_ROOM_TONE_FIXTURES"]
 private let shortAcknowledgement = ProcessInfo.processInfo.environment["VOXLOOM_QWEN_SHORT_ACK_WAV"]
+private let formatFixtures = ProcessInfo.processInfo.environment["VOXLOOM_QWEN_FORMAT_FIXTURES"]
 private let voiceActivity = QwenVoiceActivityConfiguration(
     executable: bundleResources?.appendingPathComponent("vad-speech-segments")
         ?? root.appendingPathComponent(".runtime/whisper-build/bin/vad-speech-segments"),
@@ -26,6 +27,31 @@ private let hasVoiceActivity = FileManager.default.isExecutableFile(atPath: voic
     && FileManager.default.isReadableFile(atPath: voiceActivity.model.path)
 
 @Suite(.serialized) struct QwenASRE2ETests {
+    @Test(.enabled(if: formatFixtures != nil))
+    func realQwenASRFormatsClearIdentifiersAndDecimalsWithoutReview() async throws {
+        let fixtures = URL(fileURLWithPath: try #require(formatFixtures))
+        let recognizer = QwenASRRecognizer(configuration: .init(executable: asrExecutable, model: asrModel))
+        let examples = [
+            ("labeled.wav", ["编号是00bc987"]),
+            ("decimal.wav", ["耗时1.84秒"]),
+            ("decimal-zero.wav", ["耗时1.80秒"]),
+            ("length.wav", ["1.8厘米", "1.9米"]),
+            ("weight.wav", ["2.9千克", "1.9斤"]),
+            ("prose.wav", ["B方案，下午三点开会"]),
+        ]
+        do {
+            for (filename, expected) in examples {
+                let audio = try WAVCodec.decode(Data(contentsOf: fixtures.appending(path: filename)))
+                let result = try await recognizer.transcribe(audio, options: .init(language: .chinese))
+                #expect(expected.allSatisfy(result.text.contains), Comment(rawValue: filename))
+            }
+        } catch {
+            await recognizer.shutdown()
+            throw error
+        }
+        await recognizer.shutdown()
+    }
+
     @Test(.enabled(if: roomToneFixtures != nil, "Set VOXLOOM_QWEN_ROOM_TONE_FIXTURES to the local replay directory"),
           arguments: ["room-tone.wav", "near-click.wav"])
     func realRoomToneDoesNotProduceATranscript(fixture: String) async throws {

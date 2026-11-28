@@ -5,6 +5,73 @@ import Testing
 @testable import SpeechInput
 
 @MainActor struct DictationSessionTests {
+    @Test func cancellingAudioReviewKeepsTheASRDraftAndIgnoresTheResult() async throws {
+        let capture = DraftCapture()
+        let gate = AsyncStream<Void>.makeStream()
+        defer { gate.continuation.finish() }
+        let requests = AsyncStream<AudioReviewRequest>.makeStream()
+        let deadline = Task {
+            try await SuspendingClock().sleep(for: .seconds(3))
+            requests.continuation.finish()
+        }
+        defer {
+            deadline.cancel()
+            requests.continuation.finish()
+        }
+        let reviewer = DraftAudioReviewer(gate: gate.stream, started: requests.continuation)
+        let session = DictationSession(live: LiveSpeechSession(capture: capture), audioReviewer: reviewer)
+        session.start(recognizer: DraftRecognizer())
+        try await waitUntil { capture.sink != nil }
+        capture.sink?([1000, -1000])
+        try await waitUntil { session.state.live.samples.count == 2 }
+        session.stopForAutomaticInsertion()
+        try await waitUntil { session.state.correction == .working }
+        var started = requests.stream.makeAsyncIterator()
+        let request = await started.next()
+        try #require(request?.transcript == "去公园。")
+
+        session.cancelAutomaticInsertion()
+        gate.continuation.finish()
+        #expect(!session.state.isReadyForAutomaticInsertion)
+        #expect(session.state.correction == .idle)
+        session.confirm()
+        await session.shutdown()
+        #expect(session.state.confirmedText == "去公园。")
+    }
+
+    @Test(arguments: [nil, .timedOut, .invalidResult] as [CorrectionError?])
+    func finalAudioReviewUsesPreparedAudioAndKeepsKeyboardEdits(failure: CorrectionError?) async throws {
+        let capture = DraftCapture()
+        let gate = AsyncStream<Void>.makeStream()
+        defer { gate.continuation.finish() }
+        let reviewer = DraftAudioReviewer(gate: gate.stream, failure: failure)
+        let app = DictationApplication(name: "Terminal", bundleIdentifier: "com.apple.Terminal")
+        let prepared = try AudioClip(samples: [2500, -2500])
+        let live = LiveSpeechSession(capture: capture, prepareFinalAudio: { _ in prepared })
+        let session = DictationSession(live: live, audioReviewer: reviewer, application: app)
+        session.start(recognizer: DraftRecognizer(), options: .init(context: "公园"))
+        try await waitUntil { capture.sink != nil }
+        capture.sink?([1000, -1000])
+        try await waitUntil { session.state.live.samples.count == 2 }
+        session.stopForAutomaticInsertion()
+        try await waitUntil { session.state.correction == .working }
+        #expect(session.state.text == "去公园。")
+        #expect(!session.state.isReadyForAutomaticInsertion)
+        session.edit("请去公园。", basedOn: "去公园。")
+        gate.continuation.finish()
+
+        try await waitUntil { session.state.isReadyForAutomaticInsertion }
+        #expect(await reviewer.requests == [.init(audio: prepared, transcript: "去公园。", vocabulary: "公园", application: app)])
+        #expect(session.state.text == (failure == nil ? "请去公园！" : "请去公园。"))
+        if failure == .timedOut {
+            #expect(session.state.correction == .failed("Omni 音频复核超时，已保留初稿"))
+        }
+        if failure == .invalidResult {
+            #expect(session.state.correction == .failed("Omni 返回的复核结果无效，已保留初稿"))
+        }
+        await session.shutdown()
+    }
+
     @Test func releasingAfterAClickWithoutSpeechLeavesNothingToInsert() async throws {
         let capture = DraftCapture()
         let session = DictationSession(live: LiveSpeechSession(capture: capture),
@@ -298,5 +365,26 @@ private struct DelayedCorrection: TextCorrecting {
     func correct(_ request: CorrectionRequest) async throws -> CorrectionCandidate {
         for await _ in finish { break }
         return .init(text: "去公园！", original: request.text)
+    }
+}
+
+private actor DraftAudioReviewer: AudioReviewing {
+    let gate: AsyncStream<Void>
+    let failure: CorrectionError?
+    let started: AsyncStream<AudioReviewRequest>.Continuation?
+    var requests: [AudioReviewRequest] = []
+
+    init(gate: AsyncStream<Void>, failure: CorrectionError? = nil, started: AsyncStream<AudioReviewRequest>.Continuation? = nil) {
+        self.gate = gate
+        self.failure = failure
+        self.started = started
+    }
+
+    func review(_ request: AudioReviewRequest) async throws -> String {
+        requests.append(request)
+        started?.yield(request)
+        for await _ in gate { break }
+        if let failure { throw failure }
+        return "去公园！"
     }
 }

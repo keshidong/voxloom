@@ -83,13 +83,14 @@ def main():
     source = RUNTIME / "llama.cpp-1.0.0"
     if not source.exists():
         run("tar", "-xzf", archive, "-C", RUNTIME)
-    engine = RUNTIME / "llama-build/bin/llama-completion"
-    if not engine.exists():
+    targets = ("llama-completion", "llama-mtmd-cli", "llama-server")
+    if any(not (RUNTIME / "llama-build/bin" / target).is_file() for target in targets):
         cmake = shutil.which("cmake") or RUNTIME / "cmake-4.1.3-macos-universal/CMake.app/Contents/bin/cmake"
         run(cmake, "-S", source, "-B", RUNTIME / "llama-build", "-DCMAKE_BUILD_TYPE=Release",
             "-DBUILD_SHARED_LIBS=OFF", "-DLLAMA_BUILD_TESTS=OFF", "-DLLAMA_BUILD_EXAMPLES=OFF",
-            "-DLLAMA_BUILD_SERVER=OFF", "-DLLAMA_CURL=OFF", "-DCMAKE_OSX_DEPLOYMENT_TARGET=14.0")
-        run(cmake, "--build", RUNTIME / "llama-build", "--target", "llama-completion", "-j", "4")
+            "-DLLAMA_BUILD_SERVER=ON", "-DLLAMA_BUILD_WEBUI=OFF", "-DLLAMA_BUILD_MTMD=ON",
+            "-DLLAMA_CURL=OFF", "-DCMAKE_OSX_DEPLOYMENT_TARGET=14.0")
+        run(cmake, "--build", RUNTIME / "llama-build", "--target", *targets, "-j", "4")
 
     stage = RUNTIME / "qwen-asr-runtime"
     stage.mkdir(exist_ok=True)

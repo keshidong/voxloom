@@ -22,6 +22,16 @@ class AppBundlePackagingTest(unittest.TestCase):
             self.assertTrue((resources / "voxloom-vad").is_file())
             self.assertFalse((resources / "ggml-silero-v5.1.2.bin").exists())
 
+    def test_voxloom_packages_the_omni_engine_without_bundling_its_weights(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.package(root, mlx_minimum="14.0")
+
+            resources = root / "Staged.app/Contents/Resources"
+            self.assertTrue((resources / "llama-mtmd-cli").is_file())
+            self.assertTrue((resources / "llama-server").is_file())
+            self.assertFalse(list(resources.glob("*Omni*.gguf")))
+
     def test_voxloom_display_name_follows_the_bundle_language(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -81,6 +91,8 @@ class AppBundlePackagingTest(unittest.TestCase):
             ".runtime/RxSwift-6.10.2/LICENSE.md",
             ".runtime/whisper.cpp-1.8.2/LICENSE",
             ".runtime/llama-build/bin/llama-completion",
+            ".runtime/llama-build/bin/llama-mtmd-cli",
+            ".runtime/llama-build/bin/llama-server",
             ".runtime/llama.cpp-1.0.0/LICENSE",
             ".runtime/asr-site/packaging-26.3.dist-info/licenses/LICENSE.APACHE",
             ".runtime/qwen-asr-runtime/qwen-asr",

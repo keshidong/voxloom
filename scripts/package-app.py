@@ -108,12 +108,16 @@ def main():
     catalog = "model-downloads.json"
     if arguments.external_models:
         source_files[catalog] = ROOT / "scripts" / catalog
+        source_files["llama-mtmd-cli"] = ROOT / ".runtime/llama-build/bin/llama-mtmd-cli"
+        source_files["llama-server"] = ROOT / ".runtime/llama-build/bin/llama-server"
         for name in weights:
             (resources / name).unlink(missing_ok=True)
         if (resources / qwen_model).exists():
             shutil.rmtree(resources / qwen_model)
     else:
         (resources / catalog).unlink(missing_ok=True)
+        (resources / "llama-mtmd-cli").unlink(missing_ok=True)
+        (resources / "llama-server").unlink(missing_ok=True)
         source_files.update({name: ROOT / "models" / name for name in weights})
     for name, source in source_files.items():
         destination = resources / name

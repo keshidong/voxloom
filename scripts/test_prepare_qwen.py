@@ -49,6 +49,8 @@ class QwenRuntimePreparationTest(unittest.TestCase):
             self.assertIn("--only-binary", install.args)
             self.assertEqual(install.args[install.args.index("--python-platform") + 1], "aarch64-apple-darwin")
             self.assertEqual(install.kwargs["env"]["MACOSX_DEPLOYMENT_TARGET"], "14.0")
+            builds = [call for call in commands.call_args_list if call.args[1:2] == ("--build",)]
+            self.assertTrue(any("llama-mtmd-cli" in call.args for call in builds))
 
 
 if __name__ == "__main__":

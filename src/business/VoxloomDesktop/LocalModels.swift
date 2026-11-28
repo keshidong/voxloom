@@ -6,9 +6,12 @@ struct LocalModels {
     static let qwenVoiceActivityGroup = "qwenVoiceActivity"
     let root: URL
     let downloads: ModelDownloads?
+    let omniServer: QwenOmniServer?
 
     init(root: URL, downloadDirectory: URL? = nil) {
         self.root = root
+        let executable = root.appending(path: "llama-server")
+        omniServer = FileManager.default.isExecutableFile(atPath: executable.path) ? QwenOmniServer(executable: executable) : nil
         if let downloadDirectory,
            let manifest = try? Data(contentsOf: root.appending(path: "model-downloads.json")),
            let assets = try? JSONDecoder().decode([String: [ModelDownloads.Asset]].self, from: manifest) {
@@ -45,6 +48,31 @@ struct LocalModels {
         guard settings.correctsText, downloads?.isInstalled("correction") ?? true else { return nil }
         return QwenTextCorrector(configuration: .init(executable: file("llama-completion"), model: qwenTextWeights,
             useGPU: settings.usesGPU, mode: .interactive))
+    }
+
+    var supportsOmni: Bool {
+        guard let group = DictationCorrectionModel.omni.downloadGroup, downloads?.assets[group]?.isEmpty == false else { return false }
+        return FileManager.default.isExecutableFile(atPath: file("llama-mtmd-cli").path)
+    }
+
+    func audioReviewer(for settings: DictationSettings,
+                       onApplicationContextSubmitted: (@Sendable (String) async -> Void)? = nil) -> (any AudioReviewing)? {
+        guard settings.correctionModel == .omni, let group = settings.correctionModel.downloadGroup,
+              supportsOmni, downloads?.isInstalled(group) == true else { return nil }
+        return QwenOmniAudioReviewer(configuration: .init(executable: file("llama-mtmd-cli"),
+            model: weightFile("Qwen3-Omni-30B-A3B-Instruct-Q4_K_M.gguf", group: group),
+            projector: weightFile("mmproj-Qwen3-Omni-30B-A3B-Instruct-Q8_0.gguf", group: group), useGPU: settings.usesGPU),
+            server: omniServer, appContextLog: omniAppContextLog, onApplicationContextSubmitted: onApplicationContextSubmitted)
+    }
+
+    private var omniAppContextLog: URL? {
+        #if DEBUG
+        let bundleID = Bundle.main.bundleIdentifier ?? "dev.voxloom.app.debug"
+        return FileManager.default.homeDirectoryForCurrentUser.appending(path: "Library/Logs", directoryHint: .isDirectory)
+            .appending(path: bundleID, directoryHint: .isDirectory).appending(path: "omni-app-context.json")
+        #else
+        return nil
+        #endif
     }
 
     func voiceIsolator() -> VoiceIsolator? {

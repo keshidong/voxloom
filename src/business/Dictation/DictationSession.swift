@@ -28,10 +28,15 @@ public struct DictationState: Sendable, Equatable {
     private let scheduler: any SchedulerType
     private let existingText: String
     private let recognitionPromptByteLimit: Int?
+    private let audioReviewer: (any AudioReviewing)?
+    private let application: DictationApplication?
+    private var applicationContext: Task<String, Never>?
+    private var audioPreparation: Task<Void, Never>?
     private let bag = DisposeBag()
     private let correctionObservation = SerialDisposable()
     private let finalCorrectionTimer = SerialDisposable()
     private var correction: CorrectionSession?
+    private var audioReview: Task<Void, Never>?
     private var draft: DictationDraft
     private var inputRevision = 0
     private var vocabulary = ""
@@ -40,11 +45,26 @@ public struct DictationState: Sendable, Equatable {
 
     public init(live: LiveSpeechSession, existingText: String = "",
                 correctionScheduler: any SchedulerType = MainScheduler.instance,
-                recognitionPromptByteLimit: Int? = nil) {
+                recognitionPromptByteLimit: Int? = nil, audioReviewer: (any AudioReviewing)? = nil,
+                application: DictationApplication? = nil, readApplicationContext: (@MainActor () async -> String)? = nil) {
         self.live = live
         scheduler = correctionScheduler
         self.existingText = existingText
         self.recognitionPromptByteLimit = recognitionPromptByteLimit
+        self.audioReviewer = audioReviewer
+        self.application = application
+        if audioReviewer != nil, let readApplicationContext {
+            applicationContext = Task { await readApplicationContext() }
+        }
+        if let audioReviewer {
+            let context = applicationContext
+            audioPreparation = Task {
+                let snapshot = await context?.value ?? ""
+                guard !Task.isCancelled else { return }
+                await audioReviewer.prepare(application: application, context: snapshot)
+            }
+        }
+        live.keepsAudioForReview = audioReviewer != nil
         let initial = DictationState(text: existingText)
         state = initial
         output = BehaviorSubject(value: initial)
@@ -78,7 +98,7 @@ public struct DictationState: Sendable, Equatable {
 
     public func stop() { live.stop() }
 
-    /// Stops capture, then gives the final transcript up to three seconds for correction.
+    /// Stops capture and waits for the configured correction before automatic insertion.
     public func stopForAutomaticInsertion() {
         guard state.phase == .editing, automaticInsertion == nil, !state.isReadyForAutomaticInsertion else { return }
         automaticInsertion = .waitingForTranscript
@@ -90,9 +110,10 @@ public struct DictationState: Sendable, Equatable {
         }
     }
 
-    /// Keeps the editable draft and allows any current correction to finish normally.
+    /// Keeps the editable draft. Cancels the final audio review if one is running.
     public func cancelAutomaticInsertion() {
         resetAutomaticInsertion()
+        cancelAudioReview()
         publish()
     }
 
@@ -102,7 +123,7 @@ public struct DictationState: Sendable, Equatable {
         correction?.cancel()
         correction = nil
         state.correction = .idle
-        if let corrector, state.phase == .editing {
+        if let corrector, audioReviewer == nil, state.phase == .editing {
             let next = CorrectionSession(corrector: corrector, scheduler: scheduler)
             correction = next
             correctionObservation.disposable = next.states.subscribe(onNext: { [weak self] in self?.receive($0) })
@@ -123,6 +144,7 @@ public struct DictationState: Sendable, Equatable {
         guard state.phase == .editing else { return }
         resetAutomaticInsertion()
         state.phase = .confirming
+        cancelAudioReview()
         correction?.cancel()
         if state.correction == .working { state.correction = .idle }
         switch live.state.phase {
@@ -145,6 +167,7 @@ public struct DictationState: Sendable, Equatable {
         guard cancellingRecording == nil else { return }
         cancellingRecording = state.live.session
         resetAutomaticInsertion()
+        cancelAudioReview()
         correction?.cancel()
         state.phase = .editing
         state.correction = .idle
@@ -163,6 +186,8 @@ public struct DictationState: Sendable, Equatable {
     public func shutdown() async {
         if state.phase == .editing || state.phase == .confirming { discard() }
         await live.shutdown()
+        await audioPreparation?.value
+        await audioReview?.value
         await correction?.shutdown()
     }
 
@@ -170,6 +195,7 @@ public struct DictationState: Sendable, Equatable {
         cancellingRecording = nil
         resetAutomaticInsertion()
         state.phase = .discarded
+        cancelAudioReview()
         state.correction = .idle
         correction?.cancel()
         draft = DictationDraft()
@@ -178,6 +204,7 @@ public struct DictationState: Sendable, Equatable {
 
     private func receive(_ liveState: LiveState) {
         let changed = state.live.text != liveState.text
+        let finished = state.live.phase != .idle && liveState.phase == .idle && state.live.session == liveState.session
         state.live = liveState
         if let cancelled = cancellingRecording {
             if liveState.session != cancelled, liveState.phase == .idle, liveState.samples.isEmpty {
@@ -190,6 +217,12 @@ public struct DictationState: Sendable, Equatable {
         }
         if state.phase == .confirming, liveState.phase == .idle, cancellingRecording == nil {
             state.phase = .confirmed
+        }
+        if finished {
+            reviewCompletedAudio()
+            if audioReview == nil { audioPreparation?.cancel() }
+            applicationContext?.cancel()
+            applicationContext = nil
         }
         if liveState.phase == .idle, automaticInsertion == .waitingForTranscript {
             prepareAutomaticInsertion()
@@ -208,6 +241,10 @@ public struct DictationState: Sendable, Equatable {
     }
 
     private func prepareAutomaticInsertion() {
+        if audioReview?.isCancelled == false {
+            automaticInsertion = .waitingForCorrection
+            return
+        }
         if state.live.error == nil, !state.live.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
            let correction, correction.prepareFinalDraft({ [weak self] in self?.currentCorrectionJob() }) {
             automaticInsertion = .waitingForCorrection
@@ -222,6 +259,55 @@ public struct DictationState: Sendable, Equatable {
         } else {
             finishAutomaticInsertion()
         }
+    }
+
+    private func reviewCompletedAudio() {
+        guard let audioReviewer, audioReview == nil, state.phase == .editing, cancellingRecording == nil,
+              let audio = live.takeCompletedAudio(), !state.live.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { return }
+        let transcript = state.live.text
+        let context = applicationContext
+        let preparation = audioPreparation
+        applicationContext = nil
+        state.correction = .working
+        audioReview = Task { [weak self, existingText, vocabulary, application] in
+            let status: CorrectionStatus
+            do {
+                let snapshot = await withTaskCancellationHandler { await context?.value ?? "" } onCancel: { context?.cancel() }
+                await withTaskCancellationHandler { await preparation?.value } onCancel: { preparation?.cancel() }
+                try Task.checkCancellation()
+                let request = AudioReviewRequest(audio: audio, transcript: transcript, precedingText: existingText,
+                    vocabulary: vocabulary, application: application, applicationContext: snapshot)
+                let text = try await audioReviewer.review(request)
+                status = .candidate(.init(text: text, original: request.transcript))
+            } catch is CancellationError {
+                status = .idle
+            } catch CorrectionError.timedOut {
+                status = .failed("Omni 音频复核超时，已保留初稿")
+            } catch CorrectionError.invalidResult {
+                status = .failed("Omni 返回的复核结果无效，已保留初稿")
+            } catch let error as CorrectionError {
+                status = .failed("\(error.localizedDescription) 已保留初稿")
+            } catch {
+                status = .failed("音频复核未完成，已保留初稿")
+            }
+            guard let self else { return }
+            audioReview = nil
+            guard !Task.isCancelled, state.phase == .editing else { return }
+            if case .candidate(let candidate) = status { draft.correct(candidate) }
+            state.correction = status
+            if automaticInsertion == .waitingForCorrection { finishAutomaticInsertion() }
+            publish()
+        }
+    }
+
+    private func cancelAudioReview() {
+        audioPreparation?.cancel()
+        applicationContext?.cancel()
+        applicationContext = nil
+        guard let audioReview else { return }
+        audioReview.cancel()
+        state.correction = .idle
     }
 
     private func finishAutomaticInsertion() {

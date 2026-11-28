@@ -11,9 +11,13 @@ private let publicSpeechFixtures = ProcessInfo.processInfo.environment["VOXLOOM_
 private final class ASRBoundary: JSONWorkerRunning, @unchecked Sendable {
     let lock = NSLock()
     let expectedAudio: [Int16]
+    let text: String
     var calls = 0
     var preparations = 0
-    init(expectedAudio: [Int16] = audibleTestSamples) { self.expectedAudio = expectedAudio }
+    init(expectedAudio: [Int16] = audibleTestSamples, text: String = "图书卡额度采用预付费模式") {
+        self.expectedAudio = expectedAudio
+        self.text = text
+    }
     func prepare() async throws { lock.withLock { preparations += 1 } }
     func request(_ data: Data) async throws -> Data {
         let request = try JSONSerialization.jsonObject(with: data) as! [String: String]
@@ -23,12 +27,67 @@ private final class ASRBoundary: JSONWorkerRunning, @unchecked Sendable {
         let originalAudioWasUsed = try WAVCodec.decode(audio).samples == expectedAudio
         #expect(originalAudioWasUsed)
         lock.withLock { calls += 1 }
-        return Data(#"{"text":"图书卡额度采用预付费模式","language":"zh"}"#.utf8)
+        return try JSONEncoder().encode(Transcript(text: text, language: "zh"))
     }
     func close() {}
 }
 
 struct QwenASRRecognizerTests {
+    @Test(arguments: [
+        ["零一 A 二零二零。", "01a2020"],
+        ["0 1 A B 2 0 2 2 0.", "01ab20220"],
+        ["编号是零零 B C 九八七。", "编号是00bc987。"],
+        ["验证码零零二九。", "验证码0029。"],
+        ["公司选了 B 方案，下午三点开会。", "公司选了 B 方案，下午三点开会。"],
+        ["3 apples", "3 apples"],
+        ["ISO 9001", "ISO 9001"],
+        ["零一啊，二零二零。", "零一啊，二零二零。"],
+    ])
+    func formatsClearIdentifiersBeforeReturningTheASRTranscript(example: [String]) async throws {
+        let result = try await formattedTranscript(from: example[0])
+        #expect(result == Transcript(text: example[1], language: "zh"))
+    }
+
+    @Test(arguments: [
+        ["本轮耗时一点八四秒。", "本轮耗时1.84秒。"],
+        ["测试耗时一点八零秒。", "测试耗时1.80秒。"],
+        ["间隔十二点零三毫秒。", "间隔12.03毫秒。"],
+        ["一点八厘米。一点九米。", "1.8厘米。1.9米。"],
+        ["重两点零五公斤，体积一点八升。", "重2.05公斤，体积1.8升。"],
+        ["两点九千克和一点九斤。", "2.9千克和1.9斤。"],
+        ["重一点九盎司，长十二点零三海里。", "重1.9盎司，长12.03海里。"],
+        ["气压一点零五百帕。", "气压1.05百帕。"],
+        ["测量结果是一点九。", "测量结果是1.9。"],
+        ["相差九点零二毫米。", "相差9.02毫米。"],
+        ["耗时１．８４ 秒。", "耗时1.84秒。"],
+        ["耗时一点八十秒。", "耗时一点八十秒。"],
+        ["耗时一点八百零五秒。", "耗时一点八百零五秒。"],
+        ["耗时一百二点三秒。", "耗时一百二点三秒。"],
+        ["下午三点开会。", "下午三点开会。"],
+        ["下午三点一刻，一点一滴积累。", "下午三点一刻，一点一滴积累。"],
+        ["下午一点九分开会，晚上九点二十分到达。", "下午一点九分开会，晚上九点二十分到达。"],
+        ["三点九分开会，一点一点积累。", "三点九分开会，一点一点积累。"],
+        ["版本是1.2.3。", "版本是1.2.3。"],
+    ])
+    func formatsMeasuredDecimalsWithoutGuessingDigits(example: [String]) async throws {
+        let result = try await formattedTranscript(from: example[0])
+        #expect(result == Transcript(text: example[1], language: "zh"))
+    }
+
+    private func formattedTranscript(from text: String) async throws -> Transcript {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data().write(to: root.appending(path: "model.safetensors"))
+        let worker = ASRBoundary(text: text)
+        let provider = QwenASRRecognizer(configuration: .init(executable: URL(fileURLWithPath: "/usr/bin/true"),
+            model: root), temporaryDirectory: root, factory: { worker })
+        let result = try await provider.transcribe(AudioClip(samples: audibleTestSamples),
+            options: .init(language: .chinese, context: "图书卡 预付费 USD"))
+        await provider.shutdown()
+        return result
+    }
+
     @Test func preparationReusesTheResidentVoiceDetectorForSuccessiveTranscriptions() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

@@ -5,6 +5,43 @@ import Testing
 @testable import VoxloomDesktop
 
 @MainActor struct VoxloomFlowTests {
+    @Test(arguments: [true, false])
+    func omniUsesTheOriginalTargetAppWhenFocusChangesDuringRecording(canIdentifyField: Bool) async throws {
+        let capture = FlowCapture()
+        let reviewer = FlowAudioReviewer()
+        let app = DictationApplication(name: "Terminal", bundleIdentifier: "com.apple.Terminal")
+        var settings = DictationSettings()
+        settings.correctionModel = .omni
+        var foreground: pid_t = 101
+        var lookups: [pid_t] = []
+        var textLookups: [pid_t] = []
+        var pasted: [String] = []
+        let flow = VoxloomFlow(settings: settings, capture: { capture }, recognizer: { _ in FlowRecognizer() },
+            corrector: { _ in nil }, insertion: .init(foregroundTarget: { foreground }, canPost: { true },
+                paste: { text, _ in pasted.append(text); return true }, captureFocus: { _ in canIdentifyField ? { true } : nil },
+                applicationInfo: { lookups.append($0); return $0 == 101 ? app : nil },
+                readApplicationContext: { textLookups.append($0); return "滚动更新在今晚" }),
+            audioReviewer: { _ in reviewer })
+        flow.handle(.start)
+        try await reaches { capture.receive != nil }
+        capture.receive?([3000, -3000])
+        try await reaches { flow.state?.live.samples.count == 2 }
+        try await reaches { textLookups == [101] }
+        try await reaches { await reviewer.preparedContexts == ["滚动更新在今晚"] }
+        foreground = 202
+        flow.handle(.stop)
+        try await reaches { flow.canStart && flow.state?.text == "已复核的草稿" }
+
+        #expect(lookups == [101])
+        #expect(await reviewer.applications == [app])
+        #expect(textLookups == [101])
+        #expect(await reviewer.contexts == ["滚动更新在今晚"])
+        #expect(pasted.isEmpty)
+        #expect(flow.state?.text == "已复核的草稿")
+        #expect(flow.notice == (canIdentifyField ? InsertionError.targetChanged : .noFocusedInput).localizedDescription)
+        await flow.shutdown()
+    }
+
     @Test func consecutiveDictationsReuseTheLoadedEngineAndApplyNewRecognitionOptions() async throws {
         let capture = FlowCapture()
         let recognizer = ResidentFlowRecognizer()
@@ -288,11 +325,11 @@ import Testing
         try await reaches { flow.canStart }
     }
 
-    private func reaches(_ predicate: () -> Bool) async throws {
+    private func reaches(_ predicate: () async -> Bool) async throws {
         let clock = ContinuousClock()
         let end = clock.now.advanced(by: .seconds(1))
-        while !predicate() && clock.now < end { await Task.yield() }
-        try #require(predicate())
+        while !(await predicate()) && clock.now < end { await Task.yield() }
+        try #require(await predicate())
     }
 }
 
@@ -341,5 +378,21 @@ private struct FlowDelayedCorrector: TextCorrecting {
     func correct(_ request: CorrectionRequest) async throws -> CorrectionCandidate {
         for await _ in finish { break }
         return .init(text: "校对后的稿件", original: request.text)
+    }
+}
+
+private actor FlowAudioReviewer: AudioReviewing {
+    var applications: [DictationApplication?] = []
+    var contexts: [String] = []
+    var preparedContexts: [String] = []
+
+    func prepare(application: DictationApplication?, context: String) async {
+        preparedContexts.append(context)
+    }
+
+    func review(_ request: AudioReviewRequest) async throws -> String {
+        applications.append(request.application)
+        contexts.append(request.applicationContext)
+        return "已复核的草稿"
     }
 }
