@@ -5,6 +5,22 @@ import Testing
 import Darwin
 
 struct JSONLineWorkerTests {
+    @Test func repeatedWorkerShutdownReapsEveryChild() async throws {
+        let script = try #require(Bundle.module.url(forResource: "json-worker", withExtension: "py", subdirectory: "Fixtures"))
+        for _ in 0..<12 {
+            let worker = JSONLineWorker(executable: URL(fileURLWithPath: "/usr/bin/python3"), arguments: [script.path])
+            let response = try await worker.request(Data(#"{"text":"测试"}"#.utf8))
+            let reply = try #require(JSONSerialization.jsonObject(with: response) as? [String: Any])
+            let pid = try #require(reply["pid"] as? pid_t)
+
+            worker.close()
+            await worker.shutdown()
+
+            #expect(Darwin.kill(pid, 0) == -1)
+            #expect(errno == ESRCH)
+        }
+    }
+
     @Test func preparationStartsTheWorkerBeforeTheFirstRequestAndReusesIt() async throws {
         let script = try #require(Bundle.module.url(forResource: "json-worker", withExtension: "py", subdirectory: "Fixtures"))
         let marker = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
