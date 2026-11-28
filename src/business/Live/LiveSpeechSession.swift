@@ -33,6 +33,8 @@ public extension AudioCapturing {
     private var recognizer: (any SpeechRecognizer)?
     private var options = RecognitionOptions()
     private var transcribedPreviewSamples = 0
+    var keepsAudioForReview = false
+    private var recognitionAudio: (session: Int, samples: Int, clip: AudioClip)?
     public var states: Observable<LiveState> { output.asObservable() }
     public var sourceDescription: String { capture.sourceDescription }
 
@@ -70,9 +72,18 @@ public extension AudioCapturing {
     public func cancel() { input.onNext(.cancel) }
     public func clear() { input.onNext(.clear) }
 
+    func takeCompletedAudio() -> AudioClip? {
+        defer { recognitionAudio = nil }
+        guard let recognitionAudio, state.phase == .idle, state.error == nil,
+              recognitionAudio.session == state.session, recognitionAudio.samples == state.samples.count
+        else { return nil }
+        return recognitionAudio.clip
+    }
+
     public func shutdown() async {
         let provider = recognizer
         recognizer = nil
+        recognitionAudio = nil
         capture.stop()
         clock?.dispose()
         authorization?.cancel()
@@ -97,6 +108,7 @@ public extension AudioCapturing {
             }
         case .capture(let id):
             transcribedPreviewSamples = 0
+            recognitionAudio = nil
             do {
                 try capture.start(samples: { [weak self] samples in
                     DispatchQueue.main.async { [weak self] in self?.input.onNext(.audio(id, samples)) }
@@ -135,6 +147,7 @@ public extension AudioCapturing {
                     }
                     guard let self, state.session == id, state.busy, state.submitted == samples.count else { return }
                     if isPreview, !text.isEmpty { transcribedPreviewSamples = audio.samples.count }
+                    if keepsAudioForReview, !text.isEmpty { recognitionAudio = (id, samples.count, audio) }
                     input.onNext(.result(id, samples.count, text))
                 } catch is CancellationError {} catch {
                     self?.input.onNext(isIsolatedPreview ? .previewFailed(id, samples.count) : .failed(id, "识别失败：\(error)"))
@@ -143,6 +156,7 @@ public extension AudioCapturing {
         case .cancelRecognition:
             authorization?.cancel()
             recognition?.cancel()
+            recognitionAudio = nil
         }
     }
 }

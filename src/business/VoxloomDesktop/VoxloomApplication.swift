@@ -86,10 +86,17 @@ import SpeechFoundation
         self.voiceIsolator = voiceIsolator
         let systemPaste = SystemPaste(board: pasteboard)
         self.systemPaste = systemPaste
+        #if DEBUG
+        let contextPreview = OmniContextPreview()
+        let onContextSubmitted: @Sendable (String) async -> Void = { text in await contextPreview.record(text) }
+        #else
+        let onContextSubmitted: (@Sendable (String) async -> Void)? = nil
+        #endif
         flow = VoxloomFlow(settings: selected, capture: capture,
-            recognizer: recognizer ?? models.recognizer, corrector: models.corrector,
+            recognizer: recognizer ?? models.recognizer,
             insertion: insertion ?? CaretInsertion(foregroundTarget: SystemPaste.foregroundTarget,
-                canPost: { permissions.canInsert }, paste: systemPaste.paste, captureFocus: SystemTextInput.captureFocus),
+                canPost: { permissions.canInsert }, paste: systemPaste.paste, captureFocus: SystemTextInput.captureFocus,
+                applicationInfo: SystemTextInput.applicationInfo, readApplicationContext: SystemTextInput.readContextText),
             prepareVoiceIsolation: {
                 guard let voiceIsolator else { throw VoiceIsolationSetupError.unavailable }
                 guard models.downloads?.isInstalled("voiceIsolation") != false else {
@@ -102,8 +109,12 @@ import SpeechFoundation
                     preview: { audio in try await voiceIsolator.preview(audio, references: references, session: session) },
                     final: { audio in try await voiceIsolator.isolate(audio, references: references) })
             },
-            recognitionAvailable: { models.canRecognize($0.model) })
-        settingsWindow = SettingsWindow(settings: selected, hasModelDownloads: modelPreparation != nil)
+            recognitionAvailable: { models.canRecognize($0.model) },
+            audioReviewer: { models.audioReviewer(for: $0, onApplicationContextSubmitted: onContextSubmitted) })
+        settingsWindow = SettingsWindow(settings: selected, hasModelDownloads: modelPreparation != nil, supportsOmni: models.supportsOmni)
+        #if DEBUG
+        settingsWindow.onShowOmniContext = { contextPreview.show() }
+        #endif
         super.init()
     }
 
@@ -182,6 +193,7 @@ import SpeechFoundation
         systemPaste.restoreClipboard()
         await modelPreparation?.stop()
         await flow.shutdown()
+        await models.omniServer?.shutdown()
         await voiceIsolator?.shutdown()
         await voicePreparation?.value
     }
@@ -218,7 +230,9 @@ import SpeechFoundation
             flow.apply(value)
             if previous.model != value.model { modelPreparation?.cancel(previous.model.rawValue) }
             if value.model != .qwen { modelPreparation?.cancel(LocalModels.qwenVoiceActivityGroup) }
-            if previous.correctsText && !value.correctsText { modelPreparation?.cancel("correction") }
+            if previous.correctionModel != value.correctionModel, let group = previous.correctionModel.downloadGroup {
+                modelPreparation?.cancel(group)
+            }
             if !value.usesVoiceIsolation { modelPreparation?.cancel("voiceIsolation") }
             prepareSelectedModels()
             if value.usesVoiceIsolation && !previous.usesVoiceIsolation { prepareVoiceIsolationIfEnabled() }
@@ -227,7 +241,7 @@ import SpeechFoundation
         }
         settingsWindow.onTriggerCapture = { [weak self] capturing in self?.monitor?.setSelectingTrigger(capturing) }
         settingsWindow.onRetryModel = { [weak self] model in
-            if model == "correction" { self?.prepareCorrectionModelDownload(retry: true) }
+            if model == self?.flow.settings.correctionModel.downloadGroup { self?.prepareCorrectionModelDownload(retry: true) }
             else if model == LocalModels.qwenVoiceActivityGroup { self?.prepareQwenVoiceActivityDownload(retry: true) }
             else { self?.modelPreparation?.prepare(model, retry: true) }
         }
@@ -272,9 +286,11 @@ import SpeechFoundation
 
     private func prepareCorrectionModelDownload(retry: Bool = false) {
         let settings = flow.settings
-        guard settings.correctsText, let modelPreparation,
+        guard let group = settings.correctionModel.downloadGroup, let modelPreparation,
+              modelPreparation.statusIfAvailable(for: group) != nil,
+              models.supportsOmni,
               modelPreparation.status(for: settings.model.rawValue) == .ready else { return }
-        modelPreparation.prepare("correction", retry: retry)
+        modelPreparation.prepare(group, retry: retry)
     }
 
     private func modelDownloadChanged(_ model: String) {

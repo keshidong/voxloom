@@ -50,7 +50,7 @@ import SpeechInput
 
     private let capture: () -> any AudioCapturing
     private let makeRecognizer: (DictationSettings) -> any SpeechRecognizer
-    private let corrector: (DictationSettings) -> (any TextCorrecting)?
+    private let audioReviewer: (DictationSettings) -> (any AudioReviewing)?
     private let insertion: CaretInsertion
     private let prepareVoiceIsolation: () throws -> VoiceIsolationPreparation
     private let recognitionAvailable: (DictationSettings) -> Bool
@@ -65,15 +65,16 @@ import SpeechInput
 
     init(settings: DictationSettings, capture: @escaping () -> any AudioCapturing,
          recognizer: @escaping (DictationSettings) -> any SpeechRecognizer,
-         corrector: @escaping (DictationSettings) -> (any TextCorrecting)?, insertion: CaretInsertion,
+         insertion: CaretInsertion,
          prepareVoiceIsolation: @escaping () throws -> VoiceIsolationPreparation = {
              throw VoiceIsolationSetupError.unavailable
          },
-         recognitionAvailable: @escaping (DictationSettings) -> Bool = { _ in true }) {
+         recognitionAvailable: @escaping (DictationSettings) -> Bool = { _ in true },
+         audioReviewer: @escaping (DictationSettings) -> (any AudioReviewing)? = { _ in nil }) {
         self.settings = settings
         self.capture = capture
         makeRecognizer = recognizer
-        self.corrector = corrector
+        self.audioReviewer = audioReviewer
         self.insertion = insertion
         self.prepareVoiceIsolation = prepareVoiceIsolation
         self.recognitionAvailable = recognitionAvailable
@@ -171,20 +172,22 @@ import SpeechInput
             return
         }
         let existingText = didSendInsertion ? "" : (previous?.state.text ?? "")
+        let reviewer = audioReviewer(selected)
+        let target = insertion.recordingTarget(includeApplication: reviewer != nil)
         let live = LiveSpeechSession(capture: audio, ownsRecognizer: false,
                                      prepareFinalAudio: voiceIsolation?.final, preparePreviewAudio: voiceIsolation?.preview)
         let next = DictationSession(live: live, existingText: existingText,
-                                    recognitionPromptByteLimit: selected.model.promptByteLimit)
+                                    recognitionPromptByteLimit: selected.model.promptByteLimit,
+                                    audioReviewer: reviewer, application: target.application,
+                                    readApplicationContext: target.readContext)
         notice = nil
         didSendInsertion = false
         insertionRequest = nil
         if existingText.isEmpty { editedTarget = nil }
-        let target = Result { try insertion.destination(requireFocusedInput: true) }
-        heldRecording = HeldRecording(source: source, target: target, appendsToDraft: !existingText.isEmpty)
+        heldRecording = HeldRecording(source: source, target: target.destination, appendsToDraft: !existingText.isEmpty)
         observation?.dispose()
         session = next
         observation = next.states.subscribe(onNext: { [weak self] _ in self?.refresh() })
-        next.setCorrector(corrector(selected), vocabulary: selected.vocabulary)
         startup = Task { [weak self] in
             await previous?.shutdown()
             guard let self, session === next else { return }

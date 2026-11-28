@@ -135,7 +135,8 @@ public enum CorrectionPrompt {
         return "<|im_start|>system\n\(instruction)<|im_end|>\n<|im_start|>user\n\(data)<|im_end|>\n<|im_start|>assistant\n"
     }
 
-    private static func pronunciation(of text: String) -> String? {
+    /// Returns text-derived Mandarin pinyin when the input includes Chinese characters.
+    public static func pronunciation(of text: String) -> String? {
         guard text.range(of: #"\p{Han}"#, options: .regularExpression) != nil,
               let pinyin = text.applyingTransform(.mandarinToLatin, reverse: false), pinyin != text else { return nil }
         return pinyin

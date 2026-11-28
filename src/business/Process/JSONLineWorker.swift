@@ -78,7 +78,7 @@ final class JSONLineWorker: JSONWorkerRunning, @unchecked Sendable {
                     } catch {
                         let interrupted = isClosed
                         close()
-                        io?.process.waitUntilExit()
+                        io?.termination.wait()
                         continuation.resume(throwing: interrupted ? CancellationError() : error)
                     }
                 }
@@ -96,10 +96,21 @@ final class JSONLineWorker: JSONWorkerRunning, @unchecked Sendable {
         process.standardInput = input
         process.standardOutput = output
         process.standardError = FileHandle.nullDevice
-        do { try process.run() } catch { throw RecognitionError.engineUnavailable }
+        // Observe exit without running Foundation's waitUntilExit run loop on the I/O queue.
+        let termination = DispatchGroup()
+        termination.enter()
+        process.terminationHandler = { _ in termination.leave() }
+        do {
+            try process.run()
+        } catch {
+            process.terminationHandler = nil
+            termination.leave()
+            throw RecognitionError.engineUnavailable
+        }
         try? input.fileHandleForReading.close()
         try? output.fileHandleForWriting.close()
-        let result = IO(process: process, input: input.fileHandleForWriting, output: output.fileHandleForReading)
+        let result = IO(process: process, input: input.fileHandleForWriting,
+                        output: output.fileHandleForReading, termination: termination)
         io = result
         return result
     }
@@ -120,7 +131,7 @@ final class JSONLineWorker: JSONWorkerRunning, @unchecked Sendable {
         if let io, io.process.isRunning { _ = Darwin.kill(io.process.processIdentifier, SIGKILL) }
         lock.unlock()
         queue.async {
-            io?.process.waitUntilExit()
+            io?.termination.wait()
             try? io?.input.close()
             try? io?.output.close()
         }
@@ -134,6 +145,13 @@ final class JSONLineWorker: JSONWorkerRunning, @unchecked Sendable {
         let process: Process
         let input: FileHandle
         let output: FileHandle
-        init(process: Process, input: FileHandle, output: FileHandle) { self.process = process; self.input = input; self.output = output }
+        let termination: DispatchGroup
+
+        init(process: Process, input: FileHandle, output: FileHandle, termination: DispatchGroup) {
+            self.process = process
+            self.input = input
+            self.output = output
+            self.termination = termination
+        }
     }
 }

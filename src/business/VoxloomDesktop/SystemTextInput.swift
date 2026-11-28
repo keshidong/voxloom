@@ -1,9 +1,13 @@
 import Foundation
 import ApplicationServices
+import AppKit
+import SpeechInput
 
 struct SystemTextInput {
     var attribute: (String, AXUIElement) -> CFTypeRef? = readAttribute
     var isSettable: (String, AXUIElement) -> Bool = attributeIsSettable
+    var textForRange: (NSRange, AXUIElement) -> CFTypeRef? = readTextRange
+    var contextChildren: (AXUIElement) -> [AXUIElement] = readContextChildren
 
     private struct FocusedInput {
         let element: AXUIElement
@@ -25,6 +29,33 @@ struct SystemTextInput {
     static func captureFocus(_ pid: pid_t) -> (() -> Bool)? {
         let app = application(pid)
         return SystemTextInput().captureFocus(in: app)
+    }
+
+    static func applicationInfo(_ pid: pid_t) -> DictationApplication? {
+        guard let app = NSRunningApplication(processIdentifier: pid), !app.isTerminated else { return nil }
+        let name = app.localizedName
+        let identifier = app.bundleIdentifier
+        guard name != nil || identifier != nil else { return nil }
+        return DictationApplication(name: name, bundleIdentifier: identifier)
+    }
+
+    static func readContextText(_ pid: pid_t) async -> String {
+        let read = Task.detached(priority: .userInitiated) {
+            SystemTextInput().contextText(in: application(pid))
+        }
+        return await withTaskCancellationHandler { await read.value } onCancel: { read.cancel() }
+    }
+
+    func contextText(in app: AXUIElement) -> String {
+        guard !Task.isCancelled, let window = related(kAXFocusedWindowAttribute, to: app) else { return "" }
+        let focused = related(kAXFocusedUIElementAttribute, to: app)
+        let reader = WindowAccessibilitySnapshot(attribute: attribute, children: contextChildren, textForRange: textForRange)
+        let text = reader.read(window: window, focused: focused)
+        guard !Task.isCancelled, let currentWindow = related(kAXFocusedWindowAttribute, to: app),
+              CFEqual(currentWindow, window) else { return "" }
+        let currentFocus = related(kAXFocusedUIElementAttribute, to: app)
+        guard focused == currentFocus else { return "" }
+        return text
     }
 
     func captureFocus(in app: AXUIElement) -> (() -> Bool)? {
@@ -105,11 +136,35 @@ struct SystemTextInput {
     }
 
     private func selection(of element: AXUIElement) -> NSRange? {
-        guard let value = attribute(kAXSelectedTextRangeAttribute, element),
+        range(kAXSelectedTextRangeAttribute, of: element)
+    }
+
+    private func range(_ name: String, of element: AXUIElement) -> NSRange? {
+        guard let value = attribute(name, element),
               CFGetTypeID(value) == AXValueGetTypeID() else { return nil }
         var range = CFRange()
-        guard AXValueGetValue(value as! AXValue, .cfRange, &range), range.location >= 0, range.length >= 0 else { return nil }
+        guard AXValueGetValue(value as! AXValue, .cfRange, &range), range.location >= 0, range.location < NSNotFound,
+              range.length >= 0, range.length <= Int.max - range.location else { return nil }
         return NSRange(location: range.location, length: range.length)
+    }
+
+    private static func readTextRange(_ range: NSRange, of element: AXUIElement) -> CFTypeRef? {
+        var region = CFRange(location: range.location, length: range.length)
+        guard let parameter = AXValueCreate(.cfRange, &region) else { return nil }
+        var value: CFTypeRef?
+        for name in [kAXStringForRangeParameterizedAttribute, kAXAttributedStringForRangeParameterizedAttribute] {
+            if AXUIElementCopyParameterizedAttributeValue(element, name as CFString, parameter, &value) == .success {
+                return value
+            }
+        }
+        return nil
+    }
+
+    private static func readContextChildren(_ element: AXUIElement) -> [AXUIElement] {
+        let children = (readAttribute(kAXChildrenAttribute, of: element) as? [AXUIElement])
+            ?? (readAttribute(kAXVisibleChildrenAttribute, of: element) as? [AXUIElement]) ?? []
+        for child in children { AXUIElementSetMessagingTimeout(child, 0.07) }
+        return children
     }
 
     private static func readAttribute(_ name: String, of element: AXUIElement) -> CFTypeRef? {

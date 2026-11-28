@@ -93,27 +93,35 @@ def main():
         "english.wav": ROOT / ".runtime/whisper.cpp-1.8.2/samples/jfk.wav",
         "RxSwift-LICENSE.txt": ROOT / ".runtime/RxSwift-6.10.2/LICENSE.md",
         "whisper-LICENSE.txt": ROOT / ".runtime/whisper.cpp-1.8.2/LICENSE",
-        "llama-completion": ROOT / ".runtime/llama-build/bin/llama-completion",
         "llama-LICENSE.txt": ROOT / ".runtime/llama.cpp-1.0.0/LICENSE",
         "Qwen-models-LICENSE.txt": ROOT / ".runtime/asr-site/packaging-26.3.dist-info/licenses/LICENSE.APACHE",
     }
+    weights = (
+        "ggml-tiny.bin", "ggml-base.bin", "ggml-silero-v5.1.2.bin", "ggml-large-v3-turbo-q5_0.bin",
+    )
+    demo_text_model = "Qwen3-4B-Instruct-2507-Q4_K_M.gguf"
     if standalone:
         source_files["vad-speech-segments"] = ROOT / ".runtime/whisper-build/bin/vad-speech-segments"
         source_files["voxloom-vad"] = ROOT / ".runtime/whisper-build/bin/voxloom-vad"
-    weights = (
-        "ggml-tiny.bin", "ggml-base.bin", "ggml-silero-v5.1.2.bin", "ggml-large-v3-turbo-q5_0.bin",
-        "Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
-    )
+        (resources / "llama-completion").unlink(missing_ok=True)
+        (resources / demo_text_model).unlink(missing_ok=True)
+    else:
+        source_files["llama-completion"] = ROOT / ".runtime/llama-build/bin/llama-completion"
+        weights += (demo_text_model,)
     qwen_model = "Qwen3-ASR-1.7B-4bit"
     catalog = "model-downloads.json"
     if arguments.external_models:
         source_files[catalog] = ROOT / "scripts" / catalog
+        source_files["llama-mtmd-cli"] = ROOT / ".runtime/llama-build/bin/llama-mtmd-cli"
+        source_files["llama-server"] = ROOT / ".runtime/llama-build/bin/llama-server"
         for name in weights:
             (resources / name).unlink(missing_ok=True)
         if (resources / qwen_model).exists():
             shutil.rmtree(resources / qwen_model)
     else:
         (resources / catalog).unlink(missing_ok=True)
+        (resources / "llama-mtmd-cli").unlink(missing_ok=True)
+        (resources / "llama-server").unlink(missing_ok=True)
         source_files.update({name: ROOT / "models" / name for name in weights})
     for name, source in source_files.items():
         destination = resources / name

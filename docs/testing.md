@@ -74,6 +74,45 @@ resources=Voxloom.app/Contents/Resources
   "$evaluation/open-correction/correction.json"
 ```
 
+## ASR 编号与小数格式验证
+
+使用 macOS 的 Tingting 语音生成编号、带不同单位的小数和普通语句，在 Qwen-ASR 的公开转写接口直接验证输出。
+
+```bash
+fixtures="$PWD/.build/omni-identifier-fixtures"
+mkdir -p "$fixtures"
+say -v Tingting --file-format=WAVE --data-format=LEI16@16000 -o "$fixtures/labeled.wav" '编号是零零 B C 九八七。'
+say -v Tingting --file-format=WAVE --data-format=LEI16@16000 -o "$fixtures/decimal.wav" '这轮复核耗时一点八四秒。'
+say -v Tingting --file-format=WAVE --data-format=LEI16@16000 -o "$fixtures/decimal-zero.wav" '测试耗时一点八零秒。'
+say -v Tingting --file-format=WAVE --data-format=LEI16@16000 -o "$fixtures/length.wav" '一点八厘米，一点九米。'
+say -v Tingting --file-format=WAVE --data-format=LEI16@16000 -o "$fixtures/weight.wav" '两点九千克和一点九斤。'
+say -v Tingting --file-format=WAVE --data-format=LEI16@16000 -o "$fixtures/prose.wav" '公司选了 B 方案，下午三点开会。'
+VOXLOOM_QWEN_FORMAT_FIXTURES="$fixtures" bash scripts/swift-command.sh test --filter realQwenASRFormatsClearIdentifiersAndDecimalsWithoutReview
+```
+
+## Omni 真实模型验证
+
+Omni 真实权重测试使用项目已准备的公开普通话样本。将清单中的 `omniCorrection` 两个校验过的 GGUF 文件放到 `models/`，再运行以下命令。测试通过 Swift 公开接口串联 ASR 和 Omni，验证近音修复，并检查前文、App 元数据和 300 词合成窗口上下文中的测试编号是否混入输出。[模型下载清单](../scripts/model-downloads.json)
+
+```bash
+bash scripts/prepare-app.sh --prepare-only
+VOXLOOM_TEST_OMNI=1 bash scripts/swift-command.sh test --filter omniReviewsActualAudioAndKeepsAppContextOutOfTheTranscript
+```
+
+近音术语测试用 macOS 的 Tingting 语音合成录音。验证「复核」和「负荷」都能在各自的句子里选对，并验证窗口分词为「选 字」时，复核保留正确选字和原有数字。
+
+```bash
+fixtures="$PWD/.build/omni-homophone-fixtures"
+mkdir -p "$fixtures"
+say -v Tingting --file-format=WAVE --data-format=LEI16@16000 -o "$fixtures/review.wav" '复核约用六点一秒。'
+say -v Tingting --file-format=WAVE --data-format=LEI16@16000 -o "$fixtures/deploy.wav" '刚才部署只用了九点二秒。'
+say -v Tingting --file-format=WAVE --data-format=LEI16@16000 -o "$fixtures/load.wav" '设备负荷达到六点一千瓦。'
+say -v Tingting --file-format=WAVE --data-format=LEI16@16000 -o "$fixtures/selection.wav" '复核耗时一点零九到一点一四秒，选字都正确。'
+VOXLOOM_TEST_OMNI_CONTEXT_FIXTURES="$fixtures" bash scripts/swift-command.sh test --filter omniUsesContextForAmbiguousNearSoundsAndRetainsClearSpeech
+```
+
+在同一条测试命令前设置 `VOXLOOM_TEST_OMNI_SERVER="$PWD/.runtime/llama-build/bin/llama-server"` 可走私有套接字的预热路径。测试对每段录音先预热 300 词窗口上下文，再计时并验证复核结果。
+
 ## 覆盖率门槛
 
 以下是开发质量门槛，不是已经达到的实际结果。

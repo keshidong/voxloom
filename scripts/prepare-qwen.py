@@ -74,8 +74,13 @@ def main():
 
     if not arguments.runtime_only:
         assets = json.loads((ROOT / "scripts/model-downloads.json").read_text())
-        for file in assets["qwen"] + assets["correction"]:
+        for file in assets["qwen"]:
             download(file["url"], ROOT / "models" / file["path"], file["sha256"])
+        demo_model = "Qwen3-4B-Instruct-2507-Q4_K_M.gguf"
+        download("https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/"
+                 "a06e946bb6b655725eafa393f4a9745d460374c9/" + demo_model,
+                 ROOT / "models" / demo_model,
+                 "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597")
 
     archive = RUNTIME / "llama.cpp-1.0.0.tar.gz"
     download("https://github.com/ggml-org/llama.cpp/archive/refs/tags/v1.0.0.tar.gz", archive,
@@ -83,13 +88,14 @@ def main():
     source = RUNTIME / "llama.cpp-1.0.0"
     if not source.exists():
         run("tar", "-xzf", archive, "-C", RUNTIME)
-    engine = RUNTIME / "llama-build/bin/llama-completion"
-    if not engine.exists():
+    targets = ("llama-completion", "llama-mtmd-cli", "llama-server")
+    if any(not (RUNTIME / "llama-build/bin" / target).is_file() for target in targets):
         cmake = shutil.which("cmake") or RUNTIME / "cmake-4.1.3-macos-universal/CMake.app/Contents/bin/cmake"
         run(cmake, "-S", source, "-B", RUNTIME / "llama-build", "-DCMAKE_BUILD_TYPE=Release",
             "-DBUILD_SHARED_LIBS=OFF", "-DLLAMA_BUILD_TESTS=OFF", "-DLLAMA_BUILD_EXAMPLES=OFF",
-            "-DLLAMA_BUILD_SERVER=OFF", "-DLLAMA_CURL=OFF", "-DCMAKE_OSX_DEPLOYMENT_TARGET=14.0")
-        run(cmake, "--build", RUNTIME / "llama-build", "--target", "llama-completion", "-j", "4")
+            "-DLLAMA_BUILD_SERVER=ON", "-DLLAMA_BUILD_WEBUI=OFF", "-DLLAMA_BUILD_MTMD=ON",
+            "-DLLAMA_CURL=OFF", "-DCMAKE_OSX_DEPLOYMENT_TARGET=14.0")
+        run(cmake, "--build", RUNTIME / "llama-build", "--target", *targets, "-j", "4")
 
     stage = RUNTIME / "qwen-asr-runtime"
     stage.mkdir(exist_ok=True)

@@ -7,7 +7,7 @@ import SpeechFoundation
     let correction = NSPopUpButton()
     let language = NSPopUpButton()
     let vocabulary = NSTextField()
-    let gpu = NSButton(checkboxWithTitle: "使用 GPU 加速 Whisper 和 Qwen3-4B", target: nil, action: nil)
+    let gpu = NSButton(checkboxWithTitle: "使用 GPU 加速 Whisper 和 Omni", target: nil, action: nil)
     let voiceIsolation = NSButton(checkboxWithTitle: "只保留我的声音（实验）", target: nil, action: nil)
     let enableAccessibility = NSButton(title: "启用辅助功能", target: nil, action: nil)
     private let changeTrigger = NSButton(title: "更改…", target: nil, action: nil)
@@ -21,6 +21,7 @@ import SpeechFoundation
     private let recognitionDownload = ModelDownloadRow()
     private let correctionDownload = ModelDownloadRow()
     private let isolationDownload = ModelDownloadRow()
+    private let correctionModels: [DictationCorrectionModel]
     private var voiceRows: [(kind: VoiceSampleKind, label: NSTextField, record: NSButton,
                              play: NSButton, remove: NSButton)] = []
     var onChange: ((DictationSettings) -> Void)?
@@ -30,8 +31,14 @@ import SpeechFoundation
     var onClose: (() -> Void)?
     var onRetryModel: ((String) -> Void)?
     var onTriggerCapture: ((Bool) -> Void)?
+    #if DEBUG
+    var onShowOmniContext: (() -> Void)?
 
-    init(settings: DictationSettings, hasModelDownloads: Bool = false) {
+    @objc private func showOmniContext() { onShowOmniContext?() }
+    #endif
+
+    init(settings: DictationSettings, hasModelDownloads: Bool = false, supportsOmni: Bool = false) {
+        correctionModels = supportsOmni ? DictationCorrectionModel.allCases : [.off]
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 460, height: hasModelDownloads ? 790 : 690),
                               styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.title = "\(VoxloomIdentity.displayName()) 设置"
@@ -60,7 +67,8 @@ import SpeechFoundation
         let hint = NSTextField(labelWithString: "模型与词汇设置在下一次录音时生效。")
         hint.textColor = .secondaryLabelColor
         recognition.addItems(withTitles: RecognitionModel.allCases.map(\.title))
-        correction.addItems(withTitles: ["Qwen3-4B Instruct", "关闭纠错"])
+        correction.addItems(withTitles: correctionModels.map(\.title))
+        correction.item(withTitle: DictationCorrectionModel.omni.title)?.toolTip = "约 20 GB。仅在松开听写键后本地复核录音。"
         language.addItems(withTitles: ["自动", "中文", "English"])
         vocabulary.placeholderString = "术语、人名或产品名"
         vocabulary.delegate = self
@@ -104,6 +112,12 @@ import SpeechFoundation
         let stack = NSStackView(views: [heading, hint, models, recognitionDownload, correctionDownload,
                                        gpu,
                                        separator, voiceSection, permissionHeading, keyboard, permissions])
+        #if DEBUG
+        if correctionModels.contains(.omni) {
+            let context = NSButton(title: "查看 Omni 上下文", target: self, action: #selector(showOmniContext))
+            stack.insertArrangedSubview(context, at: 5)
+        }
+        #endif
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 12
@@ -162,9 +176,11 @@ import SpeechFoundation
             recognitionDownload.render(model.title, status: recognitionStatus)
             recognitionDownload.onRetry = { [weak self] in self?.onRetryModel?(model.rawValue) }
         }
-        correctionDownload.render("Qwen3-4B Instruct", status: settings.correctsText ? setup.status(for: "correction") : nil)
+        let correctionModel = settings.correctionModel
+        let correctionGroup = correctionModel.downloadGroup
+        correctionDownload.render(correctionModel.title, status: correctionGroup.flatMap(setup.statusIfAvailable))
         isolationDownload.render("人声分离模型", status: settings.usesVoiceIsolation ? setup.status(for: "voiceIsolation") : nil)
-        correctionDownload.onRetry = { [weak self] in self?.onRetryModel?("correction") }
+        correctionDownload.onRetry = correctionGroup.map { group in { [weak self] in self?.onRetryModel?(group) } }
         isolationDownload.onRetry = { [weak self] in self?.onRetryModel?("voiceIsolation") }
     }
 
@@ -253,7 +269,8 @@ import SpeechFoundation
         trigger = settings.trigger
         refreshTriggerControls()
         recognition.selectItem(at: RecognitionModel.allCases.firstIndex(of: settings.model) ?? 0)
-        correction.selectItem(at: settings.correctsText ? 0 : 1)
+        correction.selectItem(withTitle: correctionModels.contains(settings.correctionModel)
+            ? settings.correctionModel.title : DictationCorrectionModel.off.title)
         language.selectItem(at: RecognitionLanguage.allCases.firstIndex(of: settings.language) ?? 0)
         vocabulary.stringValue = settings.vocabulary
         gpu.state = settings.usesGPU ? .on : .off
@@ -263,12 +280,13 @@ import SpeechFoundation
     func controlTextDidChange(_ notification: Notification) { changed() }
 
     @objc private func changed() {
-        guard recognition.indexOfSelectedItem >= 0, language.indexOfSelectedItem >= 0 else { return }
+        guard recognition.indexOfSelectedItem >= 0, language.indexOfSelectedItem >= 0,
+              correctionModels.indices.contains(correction.indexOfSelectedItem) else { return }
         var selected = DictationSettings()
         selected.trigger = trigger
         selected.model = RecognitionModel.allCases[recognition.indexOfSelectedItem]
         selected.language = RecognitionLanguage.allCases[language.indexOfSelectedItem]
-        selected.correctsText = correction.indexOfSelectedItem == 0
+        selected.correctionModel = correctionModels[correction.indexOfSelectedItem]
         selected.vocabulary = String(vocabulary.stringValue.prefix(240))
         selected.usesGPU = gpu.state == .on
         selected.usesVoiceIsolation = voiceIsolation.state == .on

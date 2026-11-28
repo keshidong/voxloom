@@ -105,7 +105,7 @@ public actor QwenASRRecognizer: SpeechRecognizer {
             try Task.checkCancellation()
             guard let transcript = try? JSONDecoder().decode(Transcript.self, from: response), transcript.text.utf8.count <= 16_384
             else { throw RecognitionError.invalidResult }
-            return transcript
+            return Transcript(text: QwenASRTextFormat.normalized(transcript.text), language: transcript.language)
         } catch {
             await worker.shutdown()
             self.worker = nil

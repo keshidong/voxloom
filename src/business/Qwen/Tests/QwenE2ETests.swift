@@ -9,6 +9,93 @@ private let model = bundleResources?.appendingPathComponent("Qwen3-4B-Instruct-2
 private let engine = bundleResources?.appendingPathComponent("llama-completion") ?? root.appendingPathComponent(".runtime/llama-build/bin/llama-completion")
 
 @Suite(.serialized) struct QwenE2ETests {
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["VOXLOOM_TEST_OMNI_CONTEXT_FIXTURES"] != nil))
+    func omniUsesContextForAmbiguousNearSoundsAndRetainsClearSpeech() async throws {
+        let fixturePath = try #require(ProcessInfo.processInfo.environment["VOXLOOM_TEST_OMNI_CONTEXT_FIXTURES"])
+        let fixtures = URL(fileURLWithPath: fixturePath, isDirectory: true)
+        let engine = bundleResources?.appending(path: "llama-mtmd-cli") ?? root.appending(path: ".runtime/llama-build/bin/llama-mtmd-cli")
+        let server = ProcessInfo.processInfo.environment["VOXLOOM_TEST_OMNI_SERVER"].map {
+            QwenOmniServer(executable: URL(fileURLWithPath: $0))
+        }
+        let reviewer = QwenOmniAudioReviewer(configuration: .init(
+            executable: server == nil ? engine : URL(fileURLWithPath: "/usr/bin/false"),
+            model: root.appending(path: "models/Qwen3-Omni-30B-A3B-Instruct-Q4_K_M.gguf"),
+            projector: root.appending(path: "models/mmproj-Qwen3-Omni-30B-A3B-Instruct-Q8_0.gguf")), server: server)
+        let examples = [
+            (file: "review.wav", draft: "负荷约用6.1秒。", context: "语音 转写 实测 音频 复核 约用 秒",
+             required: "复核", rejected: ["负荷"], number: "6.1"),
+            (file: "deploy.wav", draft: "刚才部属只用了9.2秒。", context: "服务 更新 环境 部署 记录 已完成",
+             required: "部署", rejected: ["部属"], number: "9.2"),
+            (file: "load.wav", draft: "设备负荷达到6.1千瓦。", context: "试验 报表 复核 耗时 项目",
+             required: "负荷", rejected: ["复核"], number: "6.1"),
+            (file: "load.wav", draft: "设备复核达到6.1千瓦。", context: "试验 设备 负荷 千瓦 工况 报表 复核",
+             required: "负荷", rejected: ["复核"], number: "6.1"),
+            (file: "selection.wav", draft: "复核耗时1.09到1.14秒，选选制都正确。", context: "语音 复核 耗时 选 字 都 正确",
+             required: "选字都正确", rejected: ["选制", "选选"], number: "1.09到1.14秒"),
+        ]
+        do {
+            let filler = "部署 清单 服务 检查 review release status notes 环境 确认".split(separator: " ")
+            for example in examples {
+                let audio = try WAVCodec.decode(Data(contentsOf: fixtures.appending(path: example.file)))
+                let terms = example.context.split(separator: " ")
+                let context = server == nil ? example.context :
+                    ((0..<(300 - terms.count)).map { filler[$0 % filler.count] } + terms).joined(separator: " ")
+                let application = DictationApplication(name: "TextEdit", bundleIdentifier: "com.apple.TextEdit")
+                await reviewer.prepare(application: application, context: context)
+                let start = ContinuousClock.now
+                let text = try await reviewer.review(.init(audio: audio, transcript: example.draft,
+                    application: application, applicationContext: context))
+                if server != nil { print("Prepared Omni review \(example.file): \(start.duration(to: .now))") }
+                #expect(text.contains(example.required), Comment(rawValue: example.file))
+                #expect(!example.rejected.contains(where: text.contains), Comment(rawValue: example.file))
+                #expect(text.contains(example.number), Comment(rawValue: example.file))
+                #expect(!text.contains("〔") && !text.contains("／"), Comment(rawValue: example.file))
+            }
+        } catch {
+            await server?.shutdown()
+            throw error
+        }
+        await server?.shutdown()
+    }
+
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["VOXLOOM_TEST_OMNI"] == "1"))
+    func omniReviewsActualAudioAndKeepsAppContextOutOfTheTranscript() async throws {
+        let asr = QwenASRRecognizer(configuration: .init(executable: root.appending(path: ".runtime/qwen-asr-runtime/qwen-asr"),
+            model: root.appending(path: "models/Qwen3-ASR-1.7B-4bit")))
+        let omniEngine = bundleResources?.appending(path: "llama-mtmd-cli") ?? root.appending(path: ".runtime/llama-build/bin/llama-mtmd-cli")
+        let contextLog = root.appending(path: ".build/reports/omni-public-sample-app-context.json")
+        let reviewer = QwenOmniAudioReviewer(configuration: .init(executable: omniEngine,
+            model: root.appending(path: "models/Qwen3-Omni-30B-A3B-Instruct-Q4_K_M.gguf"),
+            projector: root.appending(path: "models/mmproj-Qwen3-Omni-30B-A3B-Instruct-Q8_0.gguf")), appContextLog: contextLog)
+        do {
+            let audio = try WAVCodec.decode(Data(contentsOf: root.appending(path: ".runtime/asr_zh.wav")))
+            let original = try await asr.transcribe(audio, options: .init(language: .chinese))
+            try #require(original.text.contains("交易几乎停滞"))
+            let draft = original.text.replacingOccurrences(of: "交易几乎停滞", with: "交易几乎几乎停纸")
+            let fixtureWords = "部署 清单 服务 检查 review release status notes 环境 确认".split(separator: " ")
+            let snapshot = (0..<297).map { fixtureWords[$0 % fixtureWords.count] }.joined(separator: " ")
+                + " 窗口 档案 ZEN-729"
+            let start = ContinuousClock.now
+            let text = try await reviewer.review(.init(audio: audio, transcript: draft, precedingText: "档案号 ZEN-731。",
+                application: .init(name: "TextEdit", bundleIdentifier: "com.apple.TextEdit"),
+                applicationContext: snapshot))
+            print("Cold Omni audio review: \(start.duration(to: .now))")
+            let entry = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: contextLog)) as? [String: Any])
+            #expect(entry["applicationName"] as? String == "TextEdit")
+            #expect(entry["applicationBundleIdentifier"] as? String == "com.apple.TextEdit")
+            #expect(entry["contextBytes"] as? Int == snapshot.utf8.count)
+            #expect(text.contains("交易几乎停滞"))
+            #expect(!text.contains("几乎几乎"))
+            #expect(!text.contains("ZEN-731"))
+            #expect(!text.contains("ZEN-729"))
+            #expect(!text.contains("TextEdit"))
+            await asr.shutdown()
+        } catch {
+            await asr.shutdown()
+            throw error
+        }
+    }
+
     @Test(.enabled(if: FileManager.default.isExecutableFile(atPath: engine.path) && FileManager.default.fileExists(atPath: model.path)),
           arguments: [
               CorrectionRequest(text: "哦哦，寄去南桥，南桥，好像还得等三天。", vocabulary: "北桥"),

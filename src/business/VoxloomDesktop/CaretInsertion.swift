@@ -1,4 +1,5 @@
 import Foundation
+import SpeechInput
 
 enum InsertionError: LocalizedError, Equatable {
     case noTarget, noFocusedInput, permission, targetChanged, unavailable
@@ -24,15 +25,40 @@ enum InsertionError: LocalizedError, Equatable {
     var canPost: () -> Bool
     var paste: (String, pid_t) -> Bool
     var captureFocus: (pid_t) -> (() -> Bool)? = { _ in nil }
+    var applicationInfo: (pid_t) -> DictationApplication? = { _ in nil }
+    var readApplicationContext: (pid_t) async -> String = { _ in "" }
 
     func destination(requireFocusedInput: Bool = false) throws -> Destination {
-        guard canPost() else { throw InsertionError.permission }
-        guard let target = foregroundTarget() else { throw InsertionError.noTarget }
-        if requireFocusedInput {
-            guard let stillFocused = captureFocus(target) else { throw InsertionError.noFocusedInput }
-            return Destination(pid: target, stillFocused: stillFocused)
+        try destination(for: foregroundTarget(), requireFocusedInput: requireFocusedInput)
+    }
+
+    func recordingTarget(includeApplication: Bool) -> (destination: Result<Destination, Error>,
+        application: DictationApplication?, readContext: (@MainActor () async -> String)?) {
+        let pid = foregroundTarget()
+        let destination = Result { try self.destination(for: pid, requireFocusedInput: true) }
+        guard includeApplication, let pid else { return (destination, nil, nil) }
+        let stillFocused = (try? destination.get())?.stillFocused
+        let readContext = canPost() ? contextReader(for: pid, stillFocused: stillFocused) : nil
+        return (destination, applicationInfo(pid), readContext)
+    }
+
+    private func contextReader(for pid: pid_t, stillFocused: (() -> Bool)?) -> (@MainActor () async -> String) {
+        return {
+            guard !Task.isCancelled, canPost(), foregroundTarget() == pid else { return "" }
+            let text = await readApplicationContext(pid)
+            guard !Task.isCancelled, canPost(), foregroundTarget() == pid, stillFocused?() ?? true else { return "" }
+            return text
         }
-        return Destination(pid: target, stillFocused: nil)
+    }
+
+    private func destination(for pid: pid_t?, requireFocusedInput: Bool) throws -> Destination {
+        guard canPost() else { throw InsertionError.permission }
+        guard let pid else { throw InsertionError.noTarget }
+        if requireFocusedInput {
+            guard let stillFocused = captureFocus(pid) else { throw InsertionError.noFocusedInput }
+            return Destination(pid: pid, stillFocused: stillFocused)
+        }
+        return Destination(pid: pid, stillFocused: nil)
     }
 
     func insert(_ text: String, at destination: Destination) throws {

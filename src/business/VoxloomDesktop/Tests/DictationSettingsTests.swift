@@ -24,16 +24,34 @@ struct DictationSettingsTests {
         let defaults = try #require(UserDefaults(suiteName: identifier))
         defer { defaults.removePersistentDomain(forName: identifier) }
 
-        #expect(!DictationSettings().correctsText)
-        #expect(!DictationSettings(defaults: defaults).correctsText)
+        #expect(DictationSettings().correctionModel == .off)
+        #expect(DictationSettings(defaults: defaults).correctionModel == .off)
 
         defaults.set(["language": "zh"], forKey: "dictation.settings")
         var settings = DictationSettings(defaults: defaults)
-        #expect(!settings.correctsText)
+        #expect(settings.correctionModel == .off)
 
-        settings.correctsText = true
+        settings.correctionModel = .omni
         settings.save(to: defaults)
-        #expect(DictationSettings(defaults: defaults).correctsText)
+        #expect(DictationSettings(defaults: defaults).correctionModel == .omni)
+    }
+
+    @Test func retiredTextCorrectionSettingsLoadWithCorrectionOff() throws {
+        let identifier = UUID().uuidString
+        let defaults = try #require(UserDefaults(suiteName: identifier))
+        defer { defaults.removePersistentDomain(forName: identifier) }
+
+        defaults.set(["correctionModel": "text", "correction": true], forKey: "dictation.settings")
+        #expect(DictationSettings(defaults: defaults).correctionModel == .off)
+
+        defaults.set(["correction": true], forKey: "dictation.settings")
+        #expect(DictationSettings(defaults: defaults).correctionModel == .off)
+
+        defaults.set(["correctionModel": "unknown"], forKey: "dictation.settings")
+        #expect(DictationSettings(defaults: defaults).correctionModel == .off)
+
+        defaults.set(["correctionModel": "omni", "correction": true], forKey: "dictation.settings")
+        #expect(DictationSettings(defaults: defaults).correctionModel == .omni)
     }
 
     @Test func savedModelsAndOptionsLoadIntoANewSettingsInstance() throws {
@@ -44,7 +62,6 @@ struct DictationSettingsTests {
         var settings = DictationSettings()
         settings.model = .whisperTurbo
         settings.language = .english
-        settings.correctsText = false
         settings.usesGPU = false
         settings.usesVoiceIsolation = true
         settings.vocabulary = "Core Audio"

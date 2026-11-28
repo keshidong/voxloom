@@ -113,15 +113,23 @@
       ]
     }
   ],
-  "correction": [
+  "omniCorrection": [
     {
-      "path": "Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
-      "url": "https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/a06e946bb6b655725eafa393f4a9745d460374c9/Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
-      "sha256": "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597",
-      "bytes": 2497281120,
+      "path": "Qwen3-Omni-30B-A3B-Instruct-Q4_K_M.gguf",
+      "url": "https://huggingface.co/ggml-org/Qwen3-Omni-30B-A3B-Instruct-GGUF/resolve/6e35a28f4a19b18730f8949b0c579c6429649ab8/Qwen3-Omni-30B-A3B-Instruct-Q4_K_M.gguf",
+      "sha256": "d9e2876556e7873e02c0359f832432ee2d67ab7dd0cee3efe0f77fd7a1f4dd85",
+      "bytes": 18557053952,
       "fallbackURLs": [
-        "https://www.modelscope.cn/models/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/0b0406b39725d752255ffeb48f102c66f98e14aa/Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
-        "https://hf-mirror.com/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/a06e946bb6b655725eafa393f4a9745d460374c9/Qwen3-4B-Instruct-2507-Q4_K_M.gguf"
+        "https://hf-mirror.com/ggml-org/Qwen3-Omni-30B-A3B-Instruct-GGUF/resolve/6e35a28f4a19b18730f8949b0c579c6429649ab8/Qwen3-Omni-30B-A3B-Instruct-Q4_K_M.gguf"
+      ]
+    },
+    {
+      "path": "mmproj-Qwen3-Omni-30B-A3B-Instruct-Q8_0.gguf",
+      "url": "https://huggingface.co/ggml-org/Qwen3-Omni-30B-A3B-Instruct-GGUF/resolve/6e35a28f4a19b18730f8949b0c579c6429649ab8/mmproj-Qwen3-Omni-30B-A3B-Instruct-Q8_0.gguf",
+      "sha256": "1104376db833f1e89c84834144ac3863340c2cd1ddaeddb39cb0247fb5c20c8d",
+      "bytes": 1325020128,
+      "fallbackURLs": [
+        "https://hf-mirror.com/ggml-org/Qwen3-Omni-30B-A3B-Instruct-GGUF/resolve/6e35a28f4a19b18730f8949b0c579c6429649ab8/mmproj-Qwen3-Omni-30B-A3B-Instruct-Q8_0.gguf"
       ]
     }
   ],
