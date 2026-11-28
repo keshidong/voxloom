@@ -93,7 +93,7 @@ import SpeechFoundation
         let onContextSubmitted: (@Sendable (String) async -> Void)? = nil
         #endif
         flow = VoxloomFlow(settings: selected, capture: capture,
-            recognizer: recognizer ?? models.recognizer, corrector: models.corrector,
+            recognizer: recognizer ?? models.recognizer,
             insertion: insertion ?? CaretInsertion(foregroundTarget: SystemPaste.foregroundTarget,
                 canPost: { permissions.canInsert }, paste: systemPaste.paste, captureFocus: SystemTextInput.captureFocus,
                 applicationInfo: SystemTextInput.applicationInfo, readApplicationContext: SystemTextInput.readContextText),
@@ -288,7 +288,7 @@ import SpeechFoundation
         let settings = flow.settings
         guard let group = settings.correctionModel.downloadGroup, let modelPreparation,
               modelPreparation.statusIfAvailable(for: group) != nil,
-              settings.correctionModel != .omni || models.supportsOmni,
+              models.supportsOmni,
               modelPreparation.status(for: settings.model.rawValue) == .ready else { return }
         modelPreparation.prepare(group, retry: retry)
     }

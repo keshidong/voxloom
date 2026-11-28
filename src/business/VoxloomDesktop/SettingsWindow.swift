@@ -7,7 +7,7 @@ import SpeechFoundation
     let correction = NSPopUpButton()
     let language = NSPopUpButton()
     let vocabulary = NSTextField()
-    let gpu = NSButton(checkboxWithTitle: "使用 GPU 加速 Whisper 和纠错模型", target: nil, action: nil)
+    let gpu = NSButton(checkboxWithTitle: "使用 GPU 加速 Whisper 和 Omni", target: nil, action: nil)
     let voiceIsolation = NSButton(checkboxWithTitle: "只保留我的声音（实验）", target: nil, action: nil)
     let enableAccessibility = NSButton(title: "启用辅助功能", target: nil, action: nil)
     private let changeTrigger = NSButton(title: "更改…", target: nil, action: nil)
@@ -38,7 +38,7 @@ import SpeechFoundation
     #endif
 
     init(settings: DictationSettings, hasModelDownloads: Bool = false, supportsOmni: Bool = false) {
-        correctionModels = supportsOmni ? DictationCorrectionModel.allCases : [.text, .off]
+        correctionModels = supportsOmni ? DictationCorrectionModel.allCases : [.off]
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 460, height: hasModelDownloads ? 790 : 690),
                               styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.title = "\(VoxloomIdentity.displayName()) 设置"

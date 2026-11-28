@@ -50,7 +50,6 @@ import SpeechInput
 
     private let capture: () -> any AudioCapturing
     private let makeRecognizer: (DictationSettings) -> any SpeechRecognizer
-    private let corrector: (DictationSettings) -> (any TextCorrecting)?
     private let audioReviewer: (DictationSettings) -> (any AudioReviewing)?
     private let insertion: CaretInsertion
     private let prepareVoiceIsolation: () throws -> VoiceIsolationPreparation
@@ -66,7 +65,7 @@ import SpeechInput
 
     init(settings: DictationSettings, capture: @escaping () -> any AudioCapturing,
          recognizer: @escaping (DictationSettings) -> any SpeechRecognizer,
-         corrector: @escaping (DictationSettings) -> (any TextCorrecting)?, insertion: CaretInsertion,
+         insertion: CaretInsertion,
          prepareVoiceIsolation: @escaping () throws -> VoiceIsolationPreparation = {
              throw VoiceIsolationSetupError.unavailable
          },
@@ -75,7 +74,6 @@ import SpeechInput
         self.settings = settings
         self.capture = capture
         makeRecognizer = recognizer
-        self.corrector = corrector
         self.audioReviewer = audioReviewer
         self.insertion = insertion
         self.prepareVoiceIsolation = prepareVoiceIsolation
@@ -190,7 +188,6 @@ import SpeechInput
         observation?.dispose()
         session = next
         observation = next.states.subscribe(onNext: { [weak self] _ in self?.refresh() })
-        next.setCorrector(corrector(selected), vocabulary: selected.vocabulary)
         startup = Task { [weak self] in
             await previous?.shutdown()
             guard let self, session === next else { return }

@@ -8,6 +8,19 @@ import Testing
 @testable import VoxloomDesktop
 
 @MainActor @Suite(.serialized) struct VoxloomApplicationTests {
+    @Test(arguments: [true, false])
+    func correctionMenuOffersOnlySupportedOmniAndOff(supportsOmni: Bool) {
+        _ = NSApplication.shared
+        var settings = DictationSettings()
+        settings.correctionModel = .omni
+        let window = SettingsWindow(settings: settings, supportsOmni: supportsOmni)
+
+        let expected: [DictationCorrectionModel] = supportsOmni ? [.off, .omni] : [.off]
+        #expect(window.correction.itemTitles == expected.map(\.title))
+        let selected: DictationCorrectionModel = supportsOmni ? .omni : .off
+        #expect(window.correction.titleOfSelectedItem == selected.title)
+    }
+
     @Test(arguments: [false, true])
     func holdingTheVoiceBarButtonAndReleasingOutsideInsertsAtTheOriginalCaret(overlapsShortcut: Bool) async throws {
         _ = NSApplication.shared
@@ -334,7 +347,7 @@ import Testing
         let manifest = """
         {"qwen":[{"path":"weights","url":"https://example.com/required",
         "sha256":"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df","bytes":2}],
-        "correction":[{"path":"correction","url":"https://example.com/optional",
+        "omniCorrection":[{"path":"omni","url":"https://example.com/optional",
         "sha256":"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df","bytes":2}]}
         """
         try Data(manifest.utf8).write(to: directory.appending(path: "model-downloads.json"))
@@ -434,14 +447,14 @@ import Testing
         app.flow.handle(.start)
         while capture.receive == nil && ContinuousClock.now < deadline { await Task.yield() }
         #expect(capture.receive != nil)
-        #expect(!downloads.isInstalled("correction"))
+        #expect(!downloads.isInstalled("omniCorrection"))
         capture.receive?([3000, -3000])
         while app.flow.state?.live.samples.count != 2 && ContinuousClock.now < deadline { await Task.yield() }
         app.flow.handle(.stop)
         while !app.flow.canStart && ContinuousClock.now < deadline { await Task.yield() }
         #expect(app.flow.state?.text == "第一段")
-        #expect(!app.flow.settings.correctsText)
-        #expect(!downloads.isInstalled("correction"))
+        #expect(app.flow.settings.correctionModel == .off)
+        #expect(!downloads.isInstalled("omniCorrection"))
         #expect(await optionalStart.asrReady == nil)
         await app.stop()
     }
@@ -705,9 +718,7 @@ import Testing
         let domain = UUID().uuidString
         let defaults = try #require(UserDefaults(suiteName: domain))
         defer { defaults.removePersistentDomain(forName: domain) }
-        var settings = DictationSettings()
-        settings.correctsText = false
-        settings.save(to: defaults)
+        DictationSettings().save(to: defaults)
         let capture = FlowCapture()
         let clock = HistoricalScheduler(initialClock: Date(timeIntervalSince1970: 0))
         var input: DictationKeyInput?
@@ -760,12 +771,12 @@ import Testing
         await app.stop()
     }
 
-    @Test(arguments: [DictationCorrectionModel.text, .omni])
-    func correctionModelDownloadsOnlyWhenCorrectionIsEnabled(model: DictationCorrectionModel) async throws {
+    @Test func correctionModelDownloadsOnlyWhenCorrectionIsEnabled() async throws {
         _ = NSApplication.shared
         let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
         defer { try? FileManager.default.removeItem(at: root) }
+        let model = DictationCorrectionModel.omni
         let group = try #require(model.downloadGroup)
         let engine = root.appending(path: "llama-mtmd-cli")
         try Data("#!/bin/sh\nexit 1\n".utf8).write(to: engine)

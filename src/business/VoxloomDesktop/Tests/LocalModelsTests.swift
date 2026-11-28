@@ -70,9 +70,9 @@ struct LocalModelsTests {
         let models = LocalModels(root: root, downloadDirectory: cache)
         let downloads = try #require(models.downloads)
         var settings = DictationSettings()
-        settings.correctsText = true
+        settings.correctionModel = .omni
         #expect(!models.canRecognize(settings.model))
-        #expect(models.corrector(for: settings) == nil)
+        #expect(models.audioReviewer(for: settings) == nil)
 
         try await downloads.install("qwen", download: { _, _ in
             let file = cache.appending(path: "received")
@@ -80,21 +80,16 @@ struct LocalModelsTests {
             return file
         })
         #expect(models.canRecognize(settings.model))
-        #expect(models.corrector(for: settings) == nil)
+        #expect(models.audioReviewer(for: settings) == nil)
     }
 
     @Test func preferencesSelectLocalProviders() {
         let models = LocalModels(root: FileManager.default.temporaryDirectory)
         var settings = DictationSettings()
         #expect(models.recognizer(for: settings) is QwenASRRecognizer)
-        #expect(models.corrector(for: settings) == nil)
-        settings.correctsText = true
-        #expect(models.corrector(for: settings) is QwenTextCorrector)
         for model in [RecognitionModel.whisperBase, .whisperTiny, .whisperTurbo] {
             settings.model = model
             #expect(models.recognizer(for: settings) is WhisperRecognizer)
         }
-        settings.correctsText = false
-        #expect(models.corrector(for: settings) == nil)
     }
 }

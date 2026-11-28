@@ -74,8 +74,13 @@ def main():
 
     if not arguments.runtime_only:
         assets = json.loads((ROOT / "scripts/model-downloads.json").read_text())
-        for file in assets["qwen"] + assets["correction"]:
+        for file in assets["qwen"]:
             download(file["url"], ROOT / "models" / file["path"], file["sha256"])
+        demo_model = "Qwen3-4B-Instruct-2507-Q4_K_M.gguf"
+        download("https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/"
+                 "a06e946bb6b655725eafa393f4a9745d460374c9/" + demo_model,
+                 ROOT / "models" / demo_model,
+                 "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597")
 
     archive = RUNTIME / "llama.cpp-1.0.0.tar.gz"
     download("https://github.com/ggml-org/llama.cpp/archive/refs/tags/v1.0.0.tar.gz", archive,

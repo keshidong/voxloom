@@ -17,7 +17,7 @@ import Testing
         var textLookups: [pid_t] = []
         var pasted: [String] = []
         let flow = VoxloomFlow(settings: settings, capture: { capture }, recognizer: { _ in FlowRecognizer() },
-            corrector: { _ in nil }, insertion: .init(foregroundTarget: { foreground }, canPost: { true },
+            insertion: .init(foregroundTarget: { foreground }, canPost: { true },
                 paste: { text, _ in pasted.append(text); return true }, captureFocus: { _ in canIdentifyField ? { true } : nil },
                 applicationInfo: { lookups.append($0); return $0 == 101 ? app : nil },
                 readApplicationContext: { textLookups.append($0); return "滚动更新在今晚" }),
@@ -47,7 +47,7 @@ import Testing
         let recognizer = ResidentFlowRecognizer()
         var posted: [String] = []
         let flow = VoxloomFlow(settings: .init(), capture: { capture }, recognizer: { _ in recognizer },
-            corrector: { _ in nil }, insertion: .init(foregroundTarget: { 101 }, canPost: { true },
+            insertion: .init(foregroundTarget: { 101 }, canPost: { true },
                 paste: { text, _ in posted.append(text); return true }, captureFocus: { _ in { true } }))
 
         for language in [RecognitionLanguage.chinese, .english] {
@@ -69,7 +69,7 @@ import Testing
         let qwen = ResidentFlowRecognizer()
         let whisper = ResidentFlowRecognizer()
         let flow = VoxloomFlow(settings: .init(), capture: { capture },
-            recognizer: { $0.model == .qwen ? qwen : whisper }, corrector: { _ in nil },
+            recognizer: { $0.model == .qwen ? qwen : whisper },
             insertion: .init(foregroundTarget: { 101 }, canPost: { false }, paste: { _, _ in false }))
 
         func record(using model: RecognitionModel) async throws {
@@ -100,7 +100,7 @@ import Testing
         let terms = ["Voxloom"] + (0..<55).map { "词汇编号\($0)" }
         settings.vocabulary = terms.joined(separator: " ")
         let flow = VoxloomFlow(settings: settings, capture: { capture }, recognizer: { _ in recognizer },
-            corrector: { _ in nil }, insertion: .init(foregroundTarget: { 101 }, canPost: { false }, paste: { _, _ in false }))
+            insertion: .init(foregroundTarget: { 101 }, canPost: { false }, paste: { _, _ in false }))
 
         flow.handle(.start)
         try await reaches { capture.receive != nil }
@@ -126,7 +126,7 @@ import Testing
         var field = 1
         var posted: [String] = []
         let flow = VoxloomFlow(settings: .init(), capture: { capture }, recognizer: { _ in FlowRecognizer() },
-            corrector: { _ in nil }, insertion: .init(foregroundTarget: { 101 }, canPost: { true },
+            insertion: .init(foregroundTarget: { 101 }, canPost: { true },
             paste: { text, _ in posted.append(text); return true }, captureFocus: { _ in
                 let original = field
                 return { field == original }
@@ -155,7 +155,7 @@ import Testing
         var posted: [String] = []
         var opens = 0
         let flow = VoxloomFlow(settings: .init(), capture: { capture }, recognizer: { _ in FlowRecognizer() },
-            corrector: { _ in nil }, insertion: .init(foregroundTarget: { 101 }, canPost: { true },
+            insertion: .init(foregroundTarget: { 101 }, canPost: { true },
                 paste: { text, _ in posted.append(text); return true }, captureFocus: { _ in
                     let original = field
                     return { field == original }
@@ -191,10 +191,12 @@ import Testing
         let finish = AsyncStream<Void>.makeStream()
         defer { finish.continuation.finish() }
         var pasted: [String] = []
-        let flow = VoxloomFlow(settings: .init(), capture: { capture }, recognizer: { _ in FlowRecognizer() },
-            corrector: { _ in FlowDelayedCorrector(finish: finish.stream) },
+        var settings = DictationSettings()
+        settings.correctionModel = .omni
+        let flow = VoxloomFlow(settings: settings, capture: { capture }, recognizer: { _ in FlowRecognizer() },
             insertion: .init(foregroundTarget: { 101 }, canPost: { true },
-                paste: { text, _ in pasted.append(text); return true }, captureFocus: { _ in { true } }))
+                paste: { text, _ in pasted.append(text); return true }, captureFocus: { _ in { true } }),
+            audioReviewer: { _ in FlowDelayedReviewer(finish: finish.stream) })
         flow.handle(.start)
         try await reaches { capture.receive != nil }
         capture.receive?([3000, -3000])
@@ -205,10 +207,11 @@ import Testing
         #expect(!flow.canStart)
         flow.clearOrCancel()
         finish.continuation.finish()
-        try await reaches { flow.state?.text == "校对后的稿件" }
+        try await reaches { flow.canStart && flow.state?.correction == .idle }
         #expect(pasted.isEmpty)
         #expect(flow.canInsert)
-        flow.edit("手动补充", basedOn: "校对后的稿件")
+        #expect(flow.state?.text == "语音草稿")
+        flow.edit("手动补充", basedOn: "语音草稿")
         #expect(flow.state?.text == "手动补充")
         await flow.shutdown()
     }
@@ -216,13 +219,12 @@ import Testing
     @Test func holdReleaseAndConfirmInsertTheEditedDraftForTheSelectedModel() async throws {
         let fixture = FlowCapture()
         var settings = DictationSettings()
-        settings.correctsText = false
         settings.model = .whisperTiny
         var models: [RecognitionModel] = []
         var inserted: [String] = []
         let flow = VoxloomFlow(settings: settings, capture: { fixture },
             recognizer: { models.append($0.model); return FlowRecognizer() },
-            corrector: { _ in nil }, insertion: .init(foregroundTarget: { 101 }, canPost: { true },
+            insertion: .init(foregroundTarget: { 101 }, canPost: { true },
                 paste: { text, _ in inserted.append(text); return true }))
         flow.handle(.start)
         try await reaches { fixture.receive != nil }
@@ -245,7 +247,7 @@ import Testing
         let capture = FlowCapture()
         var posted: [String] = []
         let flow = VoxloomFlow(settings: .init(), capture: { capture }, recognizer: { _ in FlowRecognizer() },
-            corrector: { _ in nil }, insertion: .init(foregroundTarget: { 101 }, canPost: { true },
+            insertion: .init(foregroundTarget: { 101 }, canPost: { true },
                 paste: { text, _ in posted.append(text); return true }))
 
         func recordOneSegment() async throws {
@@ -284,7 +286,7 @@ import Testing
         var posted: [String] = []
         var opens = 0
         let flow = VoxloomFlow(settings: .init(), capture: { capture }, recognizer: { _ in FlowRecognizer() },
-            corrector: { _ in nil }, insertion: .init(foregroundTarget: { 101 }, canPost: { true },
+            insertion: .init(foregroundTarget: { 101 }, canPost: { true },
                 paste: { text, _ in posted.append(text); return true }, captureFocus: { _ in { true } }))
         flow.onOpenDraft = { opens += 1 }
         if hasDraft {
@@ -372,12 +374,12 @@ private actor ContextSinkRecognizer: SpeechRecognizer {
     }
 }
 
-private struct FlowDelayedCorrector: TextCorrecting {
+private struct FlowDelayedReviewer: AudioReviewing {
     let finish: AsyncStream<Void>
 
-    func correct(_ request: CorrectionRequest) async throws -> CorrectionCandidate {
+    func review(_ request: AudioReviewRequest) async throws -> String {
         for await _ in finish { break }
-        return .init(text: "校对后的稿件", original: request.text)
+        return "校对后的稿件"
     }
 }
 

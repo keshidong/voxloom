@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 import plistlib
 import runpy
@@ -31,6 +32,34 @@ class AppBundlePackagingTest(unittest.TestCase):
             self.assertTrue((resources / "llama-mtmd-cli").is_file())
             self.assertTrue((resources / "llama-server").is_file())
             self.assertFalse(list(resources.glob("*Omni*.gguf")))
+
+    def test_voxloom_repackaging_removes_demo_text_correction_resources(self):
+        for external_models in (False, True):
+            with self.subTest(external_models=external_models), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                resources = root / "Staged.app/Contents/Resources"
+                resources.mkdir(parents=True)
+                retired_files = ("llama-completion", "Qwen3-4B-Instruct-2507-Q4_K_M.gguf")
+                for name in retired_files:
+                    (resources / name).touch()
+
+                self.package(root, mlx_minimum="14.0", external_models=external_models)
+
+                for name in retired_files:
+                    self.assertFalse((resources / name).exists(), name)
+                if external_models:
+                    catalog = json.loads((resources / "model-downloads.json").read_text())
+                    self.assertNotIn("correction", catalog)
+                    self.assertIn("omniCorrection", catalog)
+
+    def test_legacy_demo_can_still_bundle_its_text_correction_resources(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.package(root, mlx_minimum="14.0", external_models=False, product="voice-demo")
+
+            resources = root / "Staged.app/Contents/Resources"
+            self.assertTrue((resources / "llama-completion").is_file())
+            self.assertTrue((resources / "Qwen3-4B-Instruct-2507-Q4_K_M.gguf").is_file())
 
     def test_voxloom_display_name_follows_the_bundle_language(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -80,9 +109,9 @@ class AppBundlePackagingTest(unittest.TestCase):
             build.assert_not_called()
             self.assertEqual({Path(call.args[0][-1]) for call in inspect.call_args_list}, set(binaries))
 
-    def package(self, root, mlx_minimum):
+    def package(self, root, mlx_minimum, *, external_models=True, product="voxloom"):
         for resource in (
-            ".build/release/voxloom",
+            f".build/release/{product}",
             ".runtime/whisper-build/bin/whisper-cli",
             ".runtime/whisper-build/bin/vad-speech-segments",
             ".runtime/whisper-build/bin/voxloom-vad",
@@ -98,15 +127,22 @@ class AppBundlePackagingTest(unittest.TestCase):
             ".runtime/qwen-asr-runtime/qwen-asr",
             ".runtime/qwen-asr-runtime/asr-site/mlx/core.cpython-312-darwin.so",
             ".runtime/qwen-asr-runtime/asr-site/mlx/lib/libmlx.dylib",
-            "scripts/model-downloads.json",
+            "models/ggml-tiny.bin", "models/ggml-base.bin", "models/ggml-silero-v5.1.2.bin",
+            "models/ggml-large-v3-turbo-q5_0.bin", "models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+            "models/Qwen3-ASR-1.7B-4bit/model.safetensors",
         ):
             file = root / resource
             file.parent.mkdir(parents=True, exist_ok=True)
             file.touch()
 
+        catalog = root / "scripts/model-downloads.json"
+        catalog.parent.mkdir()
+        catalog.write_bytes(SCRIPT.with_name(catalog.name).read_bytes())
         main = runpy.run_path(str(SCRIPT))["main"]
-        command = [str(SCRIPT), "--external-models", "--output", "Staged.app",
+        command = [str(SCRIPT), "--product", product, "--output", "Staged.app",
                    "--version", "0.1.2", "--build-number", "14"]
+        if external_models:
+            command.append("--external-models")
         build_info = (f"      cmd LC_BUILD_VERSION\n platform MACOS\n    minos {mlx_minimum}\n      sdk 26.5\n"
                       "   ntools 1\n     tool LD\n  version 1267.0\n")
         with patch.dict(main.__globals__, ROOT=root), patch.object(sys, "argv", command), \

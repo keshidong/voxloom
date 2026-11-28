@@ -44,12 +44,6 @@ struct LocalModels {
             flashAttention: settings.usesGPU))
     }
 
-    func corrector(for settings: DictationSettings) -> (any TextCorrecting)? {
-        guard settings.correctsText, downloads?.isInstalled("correction") ?? true else { return nil }
-        return QwenTextCorrector(configuration: .init(executable: file("llama-completion"), model: qwenTextWeights,
-            useGPU: settings.usesGPU, mode: .interactive))
-    }
-
     var supportsOmni: Bool {
         guard let group = DictationCorrectionModel.omni.downloadGroup, downloads?.assets[group]?.isEmpty == false else { return false }
         return FileManager.default.isExecutableFile(atPath: file("llama-mtmd-cli").path)
@@ -80,8 +74,6 @@ struct LocalModels {
         guard FileManager.default.isExecutableFile(atPath: executable.path) else { return nil }
         return VoiceIsolator(executable: executable, weightsDirectory: downloads?.directory(for: "voiceIsolation"))
     }
-
-    private var qwenTextWeights: URL { weightFile("Qwen3-4B-Instruct-2507-Q4_K_M.gguf", group: "correction") }
 
     private func weightFile(_ name: String, group: String) -> URL {
         downloads?.directory(for: group).appending(path: name) ?? file(name)

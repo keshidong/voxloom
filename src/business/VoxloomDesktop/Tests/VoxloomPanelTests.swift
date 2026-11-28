@@ -12,7 +12,7 @@ import Testing
         let overlay = VoxloomOverlay()
         let capture = FlowCapture()
         let flow = VoxloomFlow(settings: .init(), capture: { capture },
-            recognizer: { _ in WaitingRecognizer(finalization: AsyncStream { $0.finish() }) }, corrector: { _ in nil },
+            recognizer: { _ in WaitingRecognizer(finalization: AsyncStream { $0.finish() }) },
             insertion: .init(foregroundTarget: { nil }, canPost: { false }, paste: { _, _ in false }))
         flow.handle(.start)
         try await reaches { capture.receive != nil }
@@ -134,7 +134,7 @@ import Testing
         let restingFrame = overlay.panel.frame
         overlay.panel.orderFrontRegardless()
         let flow = VoxloomFlow(settings: .init(), capture: { FlowCapture() },
-            recognizer: { _ in WaitingRecognizer(finalization: AsyncStream { $0.finish() }) }, corrector: { _ in nil },
+            recognizer: { _ in WaitingRecognizer(finalization: AsyncStream { $0.finish() }) },
             insertion: .init(foregroundTarget: { nil }, canPost: { false }, paste: { _, _ in false }))
         defer { overlay.panel.orderOut(nil) }
 
@@ -255,7 +255,7 @@ import Testing
         var canPost = false
         let flow = VoxloomFlow(settings: .init(), capture: { capture },
             recognizer: { _ in WaitingRecognizer(finalization: finalization.stream) },
-            corrector: { _ in nil }, insertion: .init(foregroundTarget: { 101 }, canPost: { canPost }, paste: { _, _ in true }))
+            insertion: .init(foregroundTarget: { 101 }, canPost: { canPost }, paste: { _, _ in true }))
         let content = try #require(overlay.panel.contentView)
         let textWindow = try #require(overlay.editor.window)
         let textContent = try #require(textWindow.contentView)
@@ -324,7 +324,7 @@ import Testing
         let overlay = VoxloomOverlay()
         let capture = FlowCapture()
         let flow = VoxloomFlow(settings: .init(), capture: { capture },
-            recognizer: { _ in WaitingRecognizer(finalization: AsyncStream { $0.finish() }) }, corrector: { _ in nil },
+            recognizer: { _ in WaitingRecognizer(finalization: AsyncStream { $0.finish() }) },
             insertion: .init(foregroundTarget: { nil }, canPost: { false }, paste: { _, _ in false }))
         let content = try #require(overlay.panel.contentView)
         overlay.render(flow, availability: .init())
